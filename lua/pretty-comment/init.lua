@@ -8,7 +8,16 @@ M.config = {
 
 -- Shared state set by box or centered_line, read by separator.
 M._last_visual_width = nil
+M._max_visual_width = nil
 M._last_indent = ""
+
+--- Track the largest visual width seen so far.
+---@param width integer
+local function update_max_width(width)
+	if M._max_visual_width == nil or width > M._max_visual_width then
+		M._max_visual_width = width
+	end
+end
 
 --- Extract line-comment prefix and optional suffix from commentstring.
 --- Falls back to a filetype table for configs where commentstring is unset or "%s".
@@ -202,6 +211,7 @@ function M.create_box(lines, centered)
 	local content_w = max_w + (inner * 2)
 	-- Store full visual width including the two border characters
 	M._last_visual_width = content_w + 2
+	update_max_width(M._last_visual_width)
 
 	local result = {}
 	table.insert(result, prefix .. pad .. "╭" .. string.rep("─", content_w) .. "╮" .. suffix_part)
@@ -255,6 +265,7 @@ function M.create_centered_line(lines)
 
 	local width = math.max(max_tw + 8, M.config.default_width)
 	M._last_visual_width = width
+	update_max_width(M._last_visual_width)
 
 	-- Match separator layout: 2 space padding, width + 4 total span
 	local total_span = width + 4
@@ -360,12 +371,13 @@ function M.setup(opts)
 		local prefix, suffix = get_comment_parts()
 		local suffix_part = suffix ~= "" and ("  " .. suffix) or ""
 		local row = vim.api.nvim_win_get_cursor(0)[1]
-		local line = prefix .. "  " .. string.rep("─", 100) .. suffix_part
+		local width = M._max_visual_width or M.config.default_width
+		local line = prefix .. "  " .. string.rep("─", width + 4) .. suffix_part
 		if M._last_indent ~= "" then
 			line = M._last_indent .. line
 		end
 		vim.api.nvim_buf_set_lines(0, row - 1, row, false, { line })
-	end, { desc = "Insert a fixed-width comment divider" })
+	end, { desc = "Insert a comment divider (largest seen width)" })
 end
 
 return M
