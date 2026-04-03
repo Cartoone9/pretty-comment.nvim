@@ -6,7 +6,7 @@ A small Neovim plugin that wraps comments into Unicode boxes, centered titles, a
 
 ## What it does
 
-Ten commands in two styles (thin and fat), plus a strip command. All are comment-prefix-aware.
+Eleven commands in two styles (thin and fat), plus strip and redraw commands. All are comment-prefix-aware.
 
 ### Boxes
 
@@ -80,6 +80,46 @@ Ten commands in two styles (thin and fat), plus a strip command. All are comment
 
 ---
 
+### Redraw
+
+**`:CommentRedraw`** re-renders all decorated elements (boxes, centered titles, separators, dividers) to a uniform width.
+
+In **normal mode** it redraws the entire file. In **visual mode** it redraws only the selected elements (useful for normalizing a single box or title without touching the rest).
+
+The target width is determined by scanning the entire file for the widest content across all elements, so everything ends up consistent regardless of which range you redraw.
+
+```python
+# Before (inconsistent widths):
+#    ╭──────────────────╮
+#    │       Short      │
+#    ╰──────────────────╯
+
+#    ╭──────────────────────────────────────────────────────╮
+#    │            A much longer comment in a box            │
+#    ╰──────────────────────────────────────────────────────╯
+
+# After :CommentRedraw (uniform width):
+#    ╭──────────────────────────────────────────────────────╮
+#    │                        Short                         │
+#    ╰──────────────────────────────────────────────────────╯
+
+#    ╭──────────────────────────────────────────────────────╮
+#    │            A much longer comment in a box            │
+#    ╰──────────────────────────────────────────────────────╯
+```
+
+---
+
+### Width behavior
+
+Boxes and centered titles share a tracked minimum width. When you create a box or title that requires a wider frame than any previous one, the minimum ratchets up. All subsequent boxes and titles will be at least that wide, keeping your file visually consistent as you work.
+
+The tracked width resets when you restart Neovim. Use `:CommentRedraw` to re-establish consistency across the file at any time.
+
+Leading and trailing whitespace on input lines is trimmed before measuring and rendering, so stray spaces won't inflate your boxes.
+
+---
+
 All commands respect indentation and handle both prefix-only (`#`, `--`, `//`) and prefix+suffix (`/* */`, `{- -}`) comment styles.
 
 ## Installation
@@ -109,6 +149,8 @@ vim.keymap.set("n", "gcd", "<cmd>CommentDiv<CR>", { silent = true, desc = "Comme
 vim.keymap.set("n", "gcD", "<cmd>CommentDivFat<CR>", { silent = true, desc = "Fat comment divider" })
 vim.keymap.set("v", "gcr", ":CommentStrip<CR>", { silent = true, desc = "Strip comment decoration" })
 vim.keymap.set("n", "gcr", "<cmd>CommentStrip<CR>", { silent = true, desc = "Strip comment decoration (line)" })
+vim.keymap.set("v", "gcR", ":CommentRedraw<CR>", { silent = true, desc = "Redraw comment decoration (selection)" })
+vim.keymap.set("n", "gcR", "<cmd>CommentRedraw<CR>", { silent = true, desc = "Redraw all comment decoration" })
 --  ───────────────────────────────────────────────────────────────────────────────────────────────────
 --    ╭─────────────────────────────────────────────────────────────────────────────────────────────╮
 --    │          gc* keybinds above add a delay to visual 'gc' comment toggle. Use 'gcc'            │
@@ -143,6 +185,8 @@ return {
 		{ "gcD", "<cmd>CommentDivFat<CR>", mode = "n", desc = "Fat comment divider", silent = true },
 		{ "gcr", ":CommentStrip<CR>", mode = "v", desc = "Strip comment decoration", silent = true },
 		{ "gcr", "<cmd>CommentStrip<CR>", mode = "n", desc = "Strip comment decoration (line)", silent = true },
+		{ "gcR", ":CommentRedraw<CR>", mode = "v", desc = "Redraw comment decoration (selection)", silent = true },
+		{ "gcR", "<cmd>CommentRedraw<CR>", mode = "n", desc = "Redraw all comment decoration", silent = true },
 	},
 	--  ───────────────────────────────────────────────────────────────────────────────────────────────────
 	--    ╭─────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -197,8 +241,9 @@ opts = {
 | `:CommentDiv` | `gcd` | Thin divider (largest width) |
 | `:CommentDivFat` | `gcD` | Heavy divider (largest width) |
 | `:CommentStrip` | `gcr` | Strip any decoration back to plain comments |
+| `:CommentRedraw` | `gcR` | Redraw decorations to uniform width (file or selection) |
 
-Box, line, and strip commands work in both normal mode (auto-expands to the full comment block) and visual mode.
+Box, line, strip, and redraw commands work in both normal mode (auto-expands to the full comment block) and visual mode. Redraw in normal mode targets the entire file; in visual mode it targets only the selected elements.
 
 ## Supported languages
 
