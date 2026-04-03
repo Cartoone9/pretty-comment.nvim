@@ -1,8 +1,11 @@
 local M = {}
 
 M.config = {
-	padding = 4, -- spaces between comment glyph and box border
-	inner_pad = 12, -- spaces inside box around text
+	box_padding = 4, -- spaces between comment glyph and box border
+	inner_box_padding = 12, -- spaces inside box around text
+	line_padding = 2, -- spaces between comment glyph and dashes (titles/separators/dividers)
+	inner_line_padding = 1, -- spaces between dashes and text in centered titles
+	line_overshoot = 2, -- extra dashes per side on separators/dividers beyond title width
 	default_width = 60, -- default separator/title width when no prior box exists
 }
 
@@ -192,8 +195,8 @@ function M.create_box(lines, centered, style)
 
 	local b = borders[style or "thin"] or borders.thin
 	local prefix, suffix = get_comment_parts()
-	local pad = string.rep(" ", M.config.padding)
-	local inner = M.config.inner_pad
+	local pad = string.rep(" ", M.config.box_padding)
+	local inner = M.config.inner_box_padding
 	local suffix_part = suffix ~= "" and (pad .. suffix) or ""
 
 	-- Filter out empty lines
@@ -260,7 +263,10 @@ function M.create_centered_line(lines, style)
 
 	local b = borders[style or "thin"] or borders.thin
 	local prefix, suffix = get_comment_parts()
-	local suffix_part = suffix ~= "" and ("  " .. suffix) or ""
+	local line_pad = string.rep(" ", M.config.line_padding)
+	local inner_pad = M.config.inner_line_padding
+	local inner_pad_str = string.rep(" ", inner_pad)
+	local suffix_part = suffix ~= "" and (line_pad .. suffix) or ""
 
 	-- Find widest non-empty line to set a uniform width
 	local max_tw = 0
@@ -273,12 +279,12 @@ function M.create_centered_line(lines, style)
 		end
 	end
 
-	local width = math.max(max_tw + 8, M.config.default_width)
+	local width = math.max(max_tw + (inner_pad * 2) + 6, M.config.default_width)
 	M._last_visual_width = width
 	update_max_width(M._last_visual_width)
 
-	-- Match separator layout: 2 space padding, width + 4 total span
-	local total_span = width + 4
+	local overshoot = M.config.line_overshoot
+	local total_span = width + (overshoot * 2)
 
 	local result = {}
 	for _, text in ipairs(lines) do
@@ -286,12 +292,19 @@ function M.create_centered_line(lines, style)
 			goto continue
 		end
 		local tw = dw(text)
-		local dash_total = total_span - tw - 2
+		local dash_total = total_span - tw - (inner_pad * 2)
 		local ld = math.floor(dash_total / 2)
 		local rd = dash_total - ld
 		table.insert(
 			result,
-			prefix .. "  " .. string.rep(b.h, ld) .. " " .. text .. " " .. string.rep(b.h, rd) .. suffix_part
+			prefix
+				.. line_pad
+				.. string.rep(b.h, ld)
+				.. inner_pad_str
+				.. text
+				.. inner_pad_str
+				.. string.rep(b.h, rd)
+				.. suffix_part
 		)
 		::continue::
 	end
@@ -443,11 +456,12 @@ end
 function M.create_separator(style)
 	local b = borders[style or "thin"] or borders.thin
 	local prefix, suffix = get_comment_parts()
-	local suffix_part = suffix ~= "" and ("  " .. suffix) or ""
+	local line_pad = string.rep(" ", M.config.line_padding)
+	local suffix_part = suffix ~= "" and (line_pad .. suffix) or ""
 	local width = M._last_visual_width or M.config.default_width
+	local overshoot = M.config.line_overshoot
 
-	-- 2 spaces padding, plus 4 extra dashes to overshoot 2 on each side
-	local line = prefix .. "  " .. string.rep(b.h, width + 4) .. suffix_part
+	local line = prefix .. line_pad .. string.rep(b.h, width + (overshoot * 2)) .. suffix_part
 	if M._last_indent ~= "" then
 		line = M._last_indent .. line
 	end
@@ -573,10 +587,12 @@ function M.setup(opts)
 
 	vim.api.nvim_create_user_command("CommentDiv", function()
 		local prefix, suffix = get_comment_parts()
-		local suffix_part = suffix ~= "" and ("  " .. suffix) or ""
+		local line_pad = string.rep(" ", M.config.line_padding)
+		local suffix_part = suffix ~= "" and (line_pad .. suffix) or ""
 		local row = vim.api.nvim_win_get_cursor(0)[1]
 		local width = M._max_visual_width or M.config.default_width
-		local line = prefix .. "  " .. string.rep("─", width + 4) .. suffix_part
+		local overshoot = M.config.line_overshoot
+		local line = prefix .. line_pad .. string.rep("─", width + (overshoot * 2)) .. suffix_part
 		if M._last_indent ~= "" then
 			line = M._last_indent .. line
 		end
@@ -585,10 +601,12 @@ function M.setup(opts)
 
 	vim.api.nvim_create_user_command("CommentDivFat", function()
 		local prefix, suffix = get_comment_parts()
-		local suffix_part = suffix ~= "" and ("  " .. suffix) or ""
+		local line_pad = string.rep(" ", M.config.line_padding)
+		local suffix_part = suffix ~= "" and (line_pad .. suffix) or ""
 		local row = vim.api.nvim_win_get_cursor(0)[1]
 		local width = M._max_visual_width or M.config.default_width
-		local line = prefix .. "  " .. string.rep("━", width + 4) .. suffix_part
+		local overshoot = M.config.line_overshoot
+		local line = prefix .. line_pad .. string.rep("━", width + (overshoot * 2)) .. suffix_part
 		if M._last_indent ~= "" then
 			line = M._last_indent .. line
 		end
