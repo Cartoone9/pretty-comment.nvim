@@ -20,6 +20,15 @@ Four commands, all comment-prefix-aware:
 #    ╰──────────────────────────────────────╯
 ```
 
+**`:CommentBoxFat`** wraps lines into a similar box with thicker borders.
+
+```python
+# After:
+#    ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+#    ┃            Authentification            ┃
+#    ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+```
+
 ---
 
 **`:CommentLine`** turns lines into centered titles with dashes. Same auto-expand behavior.
@@ -36,13 +45,11 @@ Four commands, all comment-prefix-aware:
 
 **`:CommentSep`** inserts a separator line that matches the width of the last box or title you created.
 
+**`:CommentDiv`** inserts a divider line that matches the width of the biggest box or title you created.
+
 ```python
 #  ──────────────────────────────────────────────────────────────────
 ```
-
----
-
-**`:CommentDiv`** inserts a fixed-width divider (100 dashes), independent of any prior context.
 
 ---
 
@@ -78,6 +85,7 @@ vim.keymap.set("n", "gcd", "<cmd>CommentDiv<CR>", { silent = true, desc = "Comme
 --    ╰─────────────────────────────────────────────────────────────────────────────────────────────╯
 
 vim.keymap.set("x", "gcc", "gc", { remap = true, desc = "Comment toggle (avoids gc delay)" })
+
 ```
 
 ### lazy.nvim
@@ -93,10 +101,12 @@ return {
 	keys = {
 		{ "gcb", ":CommentBox<CR>", mode = "v", desc = "Comment box", silent = true },
 		{ "gcb", "<cmd>CommentBox<CR>", mode = "n", desc = "Comment box (line)", silent = true },
+		{ "gcf", ":CommentBoxFat<CR>", mode = "v", desc = "Comment box", silent = true },
+		{ "gcf", "<cmd>CommentBoxFat<CR>", mode = "n", desc = "Comment box (line)", silent = true },
 		{ "gcl", ":CommentLine<CR>", mode = "v", desc = "Centered title line", silent = true },
 		{ "gcl", "<cmd>CommentLine<CR>", mode = "n", desc = "Centered title line (line)", silent = true },
 		{ "gcs", "<cmd>CommentSep<CR>", mode = "n", desc = "Comment separator", silent = true },
-		{ "gcd", "<cmd>CommentDiv<CR>", mode = "n", desc = "Comment divider (fixed)", silent = true },
+		{ "gcd", "<cmd>CommentDiv<CR>", mode = "n", desc = "Comment divider", silent = true },
 	},
 
 	--  ────────────────────────────────────────────────────────────────────────────────────────────────────

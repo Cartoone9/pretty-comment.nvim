@@ -171,11 +171,18 @@ end
 
 local dw = vim.fn.strdisplaywidth
 
+--- Border style definitions.
+local borders = {
+	thin = { tl = "╭", tr = "╮", bl = "╰", br = "╯", h = "─", v = "│" },
+	heavy = { tl = "┏", tr = "┓", bl = "┗", br = "┛", h = "━", v = "┃" },
+}
+
 --- Create a box around the given lines.
 ---@param lines string[]
 ---@param centered boolean|nil center text inside the box (default true)
+---@param style string|nil border style: "thin" (default) or "heavy"
 ---@return string[]
-function M.create_box(lines, centered)
+function M.create_box(lines, centered, style)
 	if not lines or #lines == 0 then
 		return {}
 	end
@@ -183,6 +190,7 @@ function M.create_box(lines, centered)
 		centered = true
 	end
 
+	local b = borders[style or "thin"] or borders.thin
 	local prefix, suffix = get_comment_parts()
 	local pad = string.rep(" ", M.config.padding)
 	local inner = M.config.inner_pad
@@ -214,7 +222,7 @@ function M.create_box(lines, centered)
 	update_max_width(M._last_visual_width)
 
 	local result = {}
-	table.insert(result, prefix .. pad .. "╭" .. string.rep("─", content_w) .. "╮" .. suffix_part)
+	table.insert(result, prefix .. pad .. b.tl .. string.rep(b.h, content_w) .. b.tr .. suffix_part)
 
 	for _, l in ipairs(filtered) do
 		local w = dw(l)
@@ -230,11 +238,11 @@ function M.create_box(lines, centered)
 		end
 		table.insert(
 			result,
-			prefix .. pad .. "│" .. string.rep(" ", ls) .. l .. string.rep(" ", rs) .. "│" .. suffix_part
+			prefix .. pad .. b.v .. string.rep(" ", ls) .. l .. string.rep(" ", rs) .. b.v .. suffix_part
 		)
 	end
 
-	table.insert(result, prefix .. pad .. "╰" .. string.rep("─", content_w) .. "╯" .. suffix_part)
+	table.insert(result, prefix .. pad .. b.bl .. string.rep(b.h, content_w) .. b.br .. suffix_part)
 	return result
 end
 
@@ -242,13 +250,15 @@ end
 --- All lines share the same width based on the widest entry.
 --- Empty lines are skipped.
 ---@param lines string[]|string
+---@param style string|nil border style: "thin" (default) or "heavy"
 ---@return string[]
-function M.create_centered_line(lines)
+function M.create_centered_line(lines, style)
 	if type(lines) == "string" then
 		lines = { lines }
 	end
 	lines = vim.tbl_map(vim.trim, lines)
 
+	local b = borders[style or "thin"] or borders.thin
 	local prefix, suffix = get_comment_parts()
 	local suffix_part = suffix ~= "" and ("  " .. suffix) or ""
 
@@ -281,7 +291,7 @@ function M.create_centered_line(lines)
 		local rd = dash_total - ld
 		table.insert(
 			result,
-			prefix .. "  " .. string.rep("─", ld) .. " " .. text .. " " .. string.rep("─", rd) .. suffix_part
+			prefix .. "  " .. string.rep(b.h, ld) .. " " .. text .. " " .. string.rep(b.h, rd) .. suffix_part
 		)
 		::continue::
 	end
@@ -289,15 +299,67 @@ function M.create_centered_line(lines)
 	return result
 end
 
---- Create a separator line matching the last box/title width.
+--- Strip box/title/separator decoration from lines, returning plain commented text.
+--- Recognizes thin boxes (╭╮╰╯│─), heavy boxes (┏┓┗┛┃━), centered titles (─ Text ─),
+--- and pure separator/divider lines. Border-only and separator lines are discarded;
+--- content lines have their box chrome removed.
+---@param lines string[]
+---@param prefix string comment prefix
+---@param suffix string comment suffix
 ---@return string[]
-function M.create_separator()
+function M.strip_decoration(lines, prefix, suffix)
+	local esc_prefix = vim.pesc(prefix)
+	local esc_suffix = suffix ~= "" and ("%s*" .. vim.pesc(suffix)) or ""
+
+	-- Pattern fragments for both border styles
+	local border_top = "^(%s*)" .. esc_prefix .. "%s*[╭┏][─━]+[╮┓]" .. esc_suffix .. "%s*$"
+	local border_bot = "^(%s*)" .. esc_prefix .. "%s*[╰┗][─━]+[╯┛]" .. esc_suffix .. "%s*$"
+	local content_line = "^(%s*)" .. esc_prefix .. "%s*[│┃](.+)[│┃]" .. esc_suffix .. "%s*$"
+	local separator = "^(%s*)" .. esc_prefix .. "%s*[─━]+%s*$"
+	local separator_suffix = "^(%s*)" .. esc_prefix .. "%s*[─━]+" .. esc_suffix .. "%s*$"
+	local centered_title = "^(%s*)" .. esc_prefix .. "%s+[─━]+ (.+) [─━]+" .. esc_suffix .. "%s*$"
+
+	local result = {}
+	for _, line in ipairs(lines) do
+		-- Top/bottom borders: discard
+		if line:match(border_top) or line:match(border_bot) then
+			-- skip
+			-- Pure separator/divider lines: discard
+		elseif line:match(separator) or (suffix ~= "" and line:match(separator_suffix)) then
+			-- skip
+			-- Content inside a box: extract text
+		elseif line:match(content_line) then
+			local indent, text = line:match(content_line)
+			text = vim.trim(text)
+			if text ~= "" then
+				table.insert(result, indent .. prefix .. " " .. text)
+			end
+		-- Centered title line: extract title text
+		elseif line:match(centered_title) then
+			local indent, text = line:match(centered_title)
+			text = vim.trim(text)
+			if text ~= "" then
+				table.insert(result, indent .. prefix .. " " .. text)
+			end
+		else
+			-- Not decoration, keep as-is
+			table.insert(result, line)
+		end
+	end
+	return result
+end
+
+--- Create a separator line matching the last box/title width.
+---@param style string|nil border style: "thin" (default) or "heavy"
+---@return string[]
+function M.create_separator(style)
+	local b = borders[style or "thin"] or borders.thin
 	local prefix, suffix = get_comment_parts()
 	local suffix_part = suffix ~= "" and ("  " .. suffix) or ""
 	local width = M._last_visual_width or M.config.default_width
 
 	-- 2 spaces padding, plus 4 extra dashes to overshoot 2 on each side
-	local line = prefix .. "  " .. string.rep("─", width + 4) .. suffix_part
+	local line = prefix .. "  " .. string.rep(b.h, width + 4) .. suffix_part
 	if M._last_indent ~= "" then
 		line = M._last_indent .. line
 	end
@@ -335,6 +397,30 @@ function M.setup(opts)
 		vim.api.nvim_win_set_cursor(0, { target, 0 })
 	end, { range = true, desc = "Wrap selection in a comment box" })
 
+	vim.api.nvim_create_user_command("CommentBoxFat", function(args)
+		local prefix = get_comment_parts()
+		local line1, line2 = args.line1, args.line2
+
+		if args.range == 0 then
+			local line = vim.api.nvim_buf_get_lines(0, line1 - 1, line1, false)[1]
+			if is_commented(line, prefix) then
+				line1, line2 = find_comment_block(line1, prefix)
+			end
+		end
+
+		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
+		local indent = get_common_indent(raw_lines)
+		M._last_indent = indent
+
+		local stripped = strip_comments_from_lines(raw_lines, prefix)
+		local result = M.create_box(stripped, true, "heavy")
+		result = indent_lines(result, indent)
+		table.insert(result, "")
+		vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
+		local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
+		vim.api.nvim_win_set_cursor(0, { target, 0 })
+	end, { range = true, desc = "Wrap selection in a fat comment box" })
+
 	vim.api.nvim_create_user_command("CommentLine", function(args)
 		local prefix = get_comment_parts()
 		local line1, line2 = args.line1, args.line2
@@ -361,11 +447,41 @@ function M.setup(opts)
 		vim.api.nvim_win_set_cursor(0, { target, 0 })
 	end, { range = true, desc = "Create centered comment title lines" })
 
+	vim.api.nvim_create_user_command("CommentLineFat", function(args)
+		local prefix = get_comment_parts()
+		local line1, line2 = args.line1, args.line2
+
+		if args.range == 0 then
+			local line = vim.api.nvim_buf_get_lines(0, line1 - 1, line1, false)[1]
+			if is_commented(line, prefix) then
+				line1, line2 = find_comment_block(line1, prefix)
+			end
+		end
+
+		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
+		local indent = get_common_indent(raw_lines)
+		M._last_indent = indent
+
+		local stripped = strip_comments_from_lines(raw_lines, prefix)
+		local result = M.create_centered_line(stripped, "heavy")
+		result = indent_lines(result, indent)
+		table.insert(result, "")
+		vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
+		local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
+		vim.api.nvim_win_set_cursor(0, { target, 0 })
+	end, { range = true, desc = "Create fat centered comment title lines" })
+
 	vim.api.nvim_create_user_command("CommentSep", function()
 		local row = vim.api.nvim_win_get_cursor(0)[1]
 		local result = M.create_separator()
 		vim.api.nvim_buf_set_lines(0, row - 1, row, false, result)
 	end, { desc = "Insert a comment separator line" })
+
+	vim.api.nvim_create_user_command("CommentSepFat", function()
+		local row = vim.api.nvim_win_get_cursor(0)[1]
+		local result = M.create_separator("heavy")
+		vim.api.nvim_buf_set_lines(0, row - 1, row, false, result)
+	end, { desc = "Insert a fat comment separator line" })
 
 	vim.api.nvim_create_user_command("CommentDiv", function()
 		local prefix, suffix = get_comment_parts()
@@ -378,6 +494,42 @@ function M.setup(opts)
 		end
 		vim.api.nvim_buf_set_lines(0, row - 1, row, false, { line })
 	end, { desc = "Insert a comment divider (largest seen width)" })
+
+	vim.api.nvim_create_user_command("CommentDivFat", function()
+		local prefix, suffix = get_comment_parts()
+		local suffix_part = suffix ~= "" and ("  " .. suffix) or ""
+		local row = vim.api.nvim_win_get_cursor(0)[1]
+		local width = M._max_visual_width or M.config.default_width
+		local line = prefix .. "  " .. string.rep("━", width + 4) .. suffix_part
+		if M._last_indent ~= "" then
+			line = M._last_indent .. line
+		end
+		vim.api.nvim_buf_set_lines(0, row - 1, row, false, { line })
+	end, { desc = "Insert a fat comment divider (largest seen width)" })
+
+	vim.api.nvim_create_user_command("CommentStrip", function(args)
+		local prefix, suffix = get_comment_parts()
+		local line1, line2 = args.line1, args.line2
+
+		if args.range == 0 then
+			local line = vim.api.nvim_buf_get_lines(0, line1 - 1, line1, false)[1]
+			if is_commented(line, prefix) then
+				line1, line2 = find_comment_block(line1, prefix)
+			end
+		end
+
+		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
+		local result = M.strip_decoration(raw_lines, prefix, suffix)
+
+		-- Trim trailing empty lines left over from the box's blank line
+		while #result > 0 and result[#result]:match("^%s*$") do
+			table.remove(result)
+		end
+
+		vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
+		local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
+		vim.api.nvim_win_set_cursor(0, { target, 0 })
+	end, { range = true, desc = "Strip box/title decoration back to plain comments" })
 end
 
 return M
