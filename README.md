@@ -6,7 +6,7 @@ A small Neovim plugin that wraps comments into Unicode boxes, centered titles, a
 
 ## What it does
 
-Eleven commands in two styles (thin and fat), plus strip and redraw commands. All are comment-prefix-aware.
+Twelve commands in two styles (thin and fat), plus strip, redraw, and reset commands. All are comment-prefix-aware.
 
 ### Boxes
 
@@ -50,9 +50,9 @@ Eleven commands in two styles (thin and fat), plus strip and redraw commands. Al
 
 ### Separators and dividers
 
-**`:CommentSep`** / **`:CommentSepFat`** insert a separator line matching the width of the **last** box or title you created.
+**`:CommentSep`** / **`:CommentSepFat`** insert a separator line **below** the cursor, matching the width of the **last** box or title you created.
 
-**`:CommentDiv`** / **`:CommentDivFat`** insert a divider line matching the width of the **largest** box or title you created (never shrinks).
+**`:CommentDiv`** / **`:CommentDivFat`** insert a divider line **below** the cursor, matching the width of the **largest** box or title you created (never shrinks).
 
 ```python
 # Thin:
@@ -84,7 +84,7 @@ Eleven commands in two styles (thin and fat), plus strip and redraw commands. Al
 
 **`:CommentRedraw`** re-renders all decorated elements (boxes, centered titles, separators, dividers) to a uniform width.
 
-In **normal mode** it redraws the entire file. In **visual mode** it redraws only the selected elements (useful for normalizing a single box or title without touching the rest).
+In **normal mode** it redraws the entire file. In **visual mode** it redraws only the selected elements, auto-expanding to include any partially-selected blocks. All changes from a single redraw are grouped into one undo step.
 
 The target width is determined by scanning the entire file for the widest content across all elements, so everything ends up consistent regardless of which range you redraw.
 
@@ -110,11 +110,17 @@ The target width is determined by scanning the entire file for the widest conten
 
 ---
 
+### Reset
+
+**`:CommentReset`** clears the tracked minimum width for the current buffer and shows a notification. Useful when an accidentally wide box has inflated the minimum and you want to start fresh. Follow up with `:CommentRedraw` to re-normalize the file at the new (smaller) natural width.
+
+---
+
 ### Width behavior
 
-Boxes and centered titles share a tracked minimum width. When you create a box or title that requires a wider frame than any previous one, the minimum ratchets up. All subsequent boxes and titles will be at least that wide, keeping your file visually consistent as you work.
+Boxes and centered titles share a tracked minimum width **per buffer**. When you create a box or title that requires a wider frame than any previous one in that buffer, the minimum ratchets up. All subsequent boxes and titles will be at least that wide, keeping your file visually consistent as you work. Switching buffers won't carry width state across.
 
-The tracked width resets when you restart Neovim. Use `:CommentRedraw` to re-establish consistency across the file at any time.
+The tracked width resets when the buffer is wiped or when you run `:CommentReset`. Use `:CommentRedraw` to re-establish consistency across the file at any time.
 
 Leading and trailing whitespace on input lines is trimmed before measuring and rendering, so stray spaces won't inflate your boxes.
 
@@ -212,9 +218,13 @@ These are the defaults. Pass any overrides to `setup()` or through `opts` in laz
 
 ```lua
 require("pretty-comment").setup({
-  padding = 4,        -- spaces between comment prefix and box border
-  inner_pad = 12,     -- spaces inside the box around text
-  default_width = 60, -- fallback width when no prior box/title sets context
+  box_padding = 4,        -- spaces between comment prefix and box border
+  inner_box_padding = 12, -- spaces inside the box around text
+  line_padding = 2,       -- spaces between comment prefix and dashes
+  inner_line_padding = 1, -- spaces between dashes and text in titles
+  line_overshoot = 2,     -- extra dashes per side on separators/dividers
+  default_width = 60,     -- fallback width when no prior box/title sets context
+  trailing_blank = true,  -- append a blank line after box/title creation
 })
 ```
 
@@ -222,9 +232,13 @@ Or directly through `opts` in lazy.nvim:
 
 ```lua
 opts = {
-  padding = 4,
-  inner_pad = 12,
+  box_padding = 4,
+  inner_box_padding = 12,
+  line_padding = 2,
+  inner_line_padding = 1,
+  line_overshoot = 2,
   default_width = 60,
+  trailing_blank = true,
 },
 ```
 
@@ -236,14 +250,15 @@ opts = {
 | `:CommentBoxFat` | `gcB` | Heavy box (`┏━┓┃┗━┛`) |
 | `:CommentLine` | `gcl` | Thin centered title (`── Text ──`) |
 | `:CommentLineFat` | `gcL` | Heavy centered title (`━━ Text ━━`) |
-| `:CommentSep` | `gcs` | Thin separator (last width) |
-| `:CommentSepFat` | `gcS` | Heavy separator (last width) |
-| `:CommentDiv` | `gcd` | Thin divider (largest width) |
-| `:CommentDivFat` | `gcD` | Heavy divider (largest width) |
+| `:CommentSep` | `gcs` | Thin separator below cursor (last width) |
+| `:CommentSepFat` | `gcS` | Heavy separator below cursor (last width) |
+| `:CommentDiv` | `gcd` | Thin divider below cursor (largest width) |
+| `:CommentDivFat` | `gcD` | Heavy divider below cursor (largest width) |
 | `:CommentStrip` | `gcr` | Strip any decoration back to plain comments |
 | `:CommentRedraw` | `gcR` | Redraw decorations to uniform width (file or selection) |
+| `:CommentReset` | | Reset tracked width for this buffer |
 
-Box, line, strip, and redraw commands work in both normal mode (auto-expands to the full comment block) and visual mode. Redraw in normal mode targets the entire file; in visual mode it targets only the selected elements.
+Box, line, strip, and redraw commands work in both normal mode (auto-expands to the full comment block) and visual mode. Redraw in normal mode targets the entire file; in visual mode it targets only the selected elements (auto-expanding to complete blocks). All width tracking is per-buffer.
 
 ## Supported languages
 

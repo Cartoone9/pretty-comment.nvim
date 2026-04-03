@@ -7,18 +7,37 @@ M.config = {
 	inner_line_padding = 1, -- spaces between dashes and text in centered titles
 	line_overshoot = 2, -- extra dashes per side on separators/dividers beyond title width
 	default_width = 60, -- fallback width when no prior box/title sets context
+	trailing_blank = true, -- append a blank line after box/title creation
 }
 
--- Shared state set by box or centered_line, read by separator.
-M._last_visual_width = nil
-M._max_visual_width = nil
-M._last_indent = ""
+--  ──────────────────────────────────────────────────────────────────
+--                     Buffer-scoped width state
+--  ──────────────────────────────────────────────────────────────────
 
---- Track the largest visual width seen so far.
+--- Per-buffer tracking table. Keyed by buffer number.
+--- Each entry holds: last_visual_width, max_visual_width, last_indent.
+M._buf_state = {}
+
+--- Return (or create) the width-tracking state for the current buffer.
+---@return table state { last_visual_width, max_visual_width, last_indent }
+local function get_buf_state()
+	local buf = vim.api.nvim_get_current_buf()
+	if not M._buf_state[buf] then
+		M._buf_state[buf] = {
+			last_visual_width = nil,
+			max_visual_width = nil,
+			last_indent = "",
+		}
+	end
+	return M._buf_state[buf]
+end
+
+--- Track the largest visual width seen so far in the current buffer.
+---@param state table buffer state from get_buf_state()
 ---@param width integer
-local function update_max_width(width)
-	if M._max_visual_width == nil or width > M._max_visual_width then
-		M._max_visual_width = width
+local function update_max_width(state, width)
+	if state.max_visual_width == nil or width > state.max_visual_width then
+		state.max_visual_width = width
 	end
 end
 
@@ -89,7 +108,6 @@ local function get_comment_parts()
 			end
 		end
 	end
-	-- Fallback for filetypes with missing or broken commentstring
 	local ft_map = {
 		dockerfile = "#",
 		kitty = "#",
@@ -229,7 +247,6 @@ local dw = vim.fn.strdisplaywidth
 --                    Line type classification
 --  ──────────────────────────────────────────────────────────────────
 
---- Decoration types returned by classify_decorated_line.
 local DTYPE = {
 	PLAIN = "plain",
 	BOX_TOP_THIN = "box_top_thin",
@@ -245,25 +262,17 @@ local DTYPE = {
 }
 
 --- Classify a buffer line as a specific decoration type.
---- Returns the DTYPE and the trimmed content after prefix/suffix removal.
 ---@param line string raw buffer line
 ---@param prefix string comment prefix
 ---@param suffix string comment suffix
 ---@return string dtype one of the DTYPE values
 local function classify_decorated_line(line, prefix, suffix)
 	local rest = vim.trim(line)
-	if rest == "" then
-		return DTYPE.PLAIN
-	end
-
-	-- Must start with comment prefix
-	if rest:sub(1, #prefix) ~= prefix then
+	if rest == "" or rest:sub(1, #prefix) ~= prefix then
 		return DTYPE.PLAIN
 	end
 
 	local after_prefix = rest:sub(#prefix + 1)
-
-	-- Strip suffix from end if present
 	if suffix ~= "" then
 		local s = after_prefix:gsub("%s+$", "")
 		if s:sub(-#suffix) == suffix then
@@ -272,12 +281,7 @@ local function classify_decorated_line(line, prefix, suffix)
 	end
 
 	local trimmed = vim.trim(after_prefix)
-	if trimmed == "" then
-		return DTYPE.PLAIN
-	end
-
-	-- All box-drawing chars are 3 bytes in UTF-8
-	if #trimmed < 3 then
+	if trimmed == "" or #trimmed < 3 then
 		return DTYPE.PLAIN
 	end
 
@@ -317,7 +321,7 @@ local function classify_decorated_line(line, prefix, suffix)
 		return DTYPE.SEP_FAT
 	end
 
-	-- Centered title lines: dashes, space, text, space, dashes
+	-- Centered title lines
 	if first == "─" then
 		local after_dashes = strip_leading(trimmed, "─")
 		if after_dashes ~= "" and after_dashes:sub(1, 1) == " " then
@@ -326,7 +330,6 @@ local function classify_decorated_line(line, prefix, suffix)
 				return DTYPE.LINE_THIN
 			end
 		end
-		-- Fallback: pure dashes (shouldn't reach here after the only_repeated check)
 		return DTYPE.SEP_THIN
 	end
 	if first == "━" then
@@ -348,7 +351,7 @@ end
 ---@param prefix string comment prefix
 ---@param suffix string comment suffix
 ---@param dash string the dash character ("─" or "━")
----@return string text content without decoration
+---@return string
 local function extract_centered_line_text(line, prefix, suffix, dash)
 	local rest = vim.trim(line)
 	local after_prefix = rest:sub(#prefix + 1)
@@ -368,7 +371,7 @@ end
 ---@param line string raw buffer line
 ---@param prefix string comment prefix
 ---@param suffix string comment suffix
----@return string text content without decoration
+---@return string
 local function extract_box_content_text(line, prefix, suffix)
 	local rest = vim.trim(line)
 	local after_prefix = rest:sub(#prefix + 1)
@@ -379,7 +382,6 @@ local function extract_box_content_text(line, prefix, suffix)
 		end
 	end
 	local trimmed = vim.trim(after_prefix)
-	-- Strip the leading and trailing 3-byte border chars
 	local inner = trimmed:sub(4, -4)
 	return vim.trim(inner)
 end
@@ -398,7 +400,8 @@ local borders = {
 --  ──────────────────────────────────────────────────────────────────
 
 --- Create a box around the given lines.
---- Enforces a minimum width from _max_visual_width so boxes stay consistent.
+--- Enforces a minimum width from the buffer's max_visual_width so boxes stay consistent.
+--- Does NOT apply indentation; the caller is responsible for that.
 ---@param lines string[]
 ---@param centered boolean|nil center text inside the box (default true)
 ---@param style string|nil border style: "thin" (default) or "heavy"
@@ -411,6 +414,7 @@ function M.create_box(lines, centered, style)
 		centered = true
 	end
 
+	local state = get_buf_state()
 	local b = borders[style or "thin"] or borders.thin
 	local prefix, suffix = get_comment_parts()
 	local pad = string.rep(" ", M.config.box_padding)
@@ -429,7 +433,6 @@ function M.create_box(lines, centered, style)
 		return {}
 	end
 
-	-- Measure widest line
 	local max_w = 0
 	for _, l in ipairs(filtered) do
 		local w = dw(l)
@@ -441,14 +444,14 @@ function M.create_box(lines, centered, style)
 	local content_w = max_w + (inner * 2)
 	local visual_w = content_w + 2
 
-	-- Enforce minimum width from tracked max
-	if M._max_visual_width and visual_w < M._max_visual_width then
-		visual_w = M._max_visual_width
+	-- Enforce minimum width from buffer-tracked max
+	if state.max_visual_width and visual_w < state.max_visual_width then
+		visual_w = state.max_visual_width
 		content_w = visual_w - 2
 	end
 
-	M._last_visual_width = visual_w
-	update_max_width(visual_w)
+	state.last_visual_width = visual_w
+	update_max_width(state, visual_w)
 
 	local result = {}
 	table.insert(result, prefix .. pad .. b.tl .. string.rep(b.h, content_w) .. b.tr .. suffix_part)
@@ -476,8 +479,8 @@ function M.create_box(lines, centered, style)
 end
 
 --- Create centered title lines: ────── Title ──────
---- All lines share the same width based on the widest entry.
---- Enforces a minimum width from _max_visual_width for consistency with boxes.
+--- Enforces a minimum width from the buffer's max_visual_width for consistency with boxes.
+--- Does NOT apply indentation; the caller is responsible for that.
 ---@param lines string[]|string
 ---@param style string|nil border style: "thin" (default) or "heavy"
 ---@return string[]
@@ -485,10 +488,9 @@ function M.create_centered_line(lines, style)
 	if type(lines) == "string" then
 		lines = { lines }
 	end
-
-	-- Trim whitespace from each line
 	lines = vim.tbl_map(vim.trim, lines)
 
+	local state = get_buf_state()
 	local b = borders[style or "thin"] or borders.thin
 	local prefix, suffix = get_comment_parts()
 	local line_pad = string.rep(" ", M.config.line_padding)
@@ -496,7 +498,6 @@ function M.create_centered_line(lines, style)
 	local inner_pad_str = string.rep(" ", inner_pad)
 	local suffix_part = suffix ~= "" and (line_pad .. suffix) or ""
 
-	-- Find widest non-empty line to set a uniform width
 	local max_tw = 0
 	for _, text in ipairs(lines) do
 		if text ~= "" then
@@ -509,13 +510,13 @@ function M.create_centered_line(lines, style)
 
 	local width = math.max(max_tw + (inner_pad * 2) + 6, M.config.default_width)
 
-	-- Enforce minimum width from tracked max (unified with boxes)
-	if M._max_visual_width and width < M._max_visual_width then
-		width = M._max_visual_width
+	-- Enforce minimum width from buffer-tracked max (unified with boxes)
+	if state.max_visual_width and width < state.max_visual_width then
+		width = state.max_visual_width
 	end
 
-	M._last_visual_width = width
-	update_max_width(width)
+	state.last_visual_width = width
+	update_max_width(state, width)
 
 	local overshoot = M.config.line_overshoot
 	local total_span = width + (overshoot * 2)
@@ -546,14 +547,39 @@ function M.create_centered_line(lines, style)
 	return result
 end
 
+--- Create a separator line matching the last box/title width.
+--- Does NOT apply indentation; the caller is responsible for that.
+---@param style string|nil border style: "thin" (default) or "heavy"
+---@return string[]
+function M.create_separator(style)
+	local state = get_buf_state()
+	local b = borders[style or "thin"] or borders.thin
+	local prefix, suffix = get_comment_parts()
+	local line_pad = string.rep(" ", M.config.line_padding)
+	local suffix_part = suffix ~= "" and (line_pad .. suffix) or ""
+	local width = state.last_visual_width or M.config.default_width
+	local overshoot = M.config.line_overshoot
+
+	return { prefix .. line_pad .. string.rep(b.h, width + (overshoot * 2)) .. suffix_part }
+end
+
+--- Create a divider line matching the largest box/title width ever seen in this buffer.
+--- Does NOT apply indentation; the caller is responsible for that.
+---@param style string|nil border style: "thin" (default) or "heavy"
+---@return string[]
+function M.create_divider(style)
+	local state = get_buf_state()
+	local b = borders[style or "thin"] or borders.thin
+	local prefix, suffix = get_comment_parts()
+	local line_pad = string.rep(" ", M.config.line_padding)
+	local suffix_part = suffix ~= "" and (line_pad .. suffix) or ""
+	local width = state.max_visual_width or M.config.default_width
+	local overshoot = M.config.line_overshoot
+
+	return { prefix .. line_pad .. string.rep(b.h, width + (overshoot * 2)) .. suffix_part }
+end
+
 --- Strip box/title/separator decoration from lines, returning plain commented text.
---- Recognizes thin boxes (╭╮╰╯│─), heavy boxes (┏┓┗┛┃━), centered titles (─ Text ─),
---- and pure separator/divider lines. Border-only and separator lines are discarded;
---- content lines have their box chrome removed.
----
---- NOTE: All box-drawing characters are 3-byte UTF-8 sequences. Lua patterns operate
---- on raw bytes, so character classes like [╭┏] silently corrupt multi-byte chars.
---- This function uses plain string comparison (sub/find) instead.
 ---@param lines string[]
 ---@param prefix string comment prefix
 ---@param suffix string comment suffix
@@ -564,15 +590,12 @@ function M.strip_decoration(lines, prefix, suffix)
 		local indent = line:match("^(%s*)") or ""
 		local rest = line:sub(#indent + 1)
 
-		-- Must start with comment prefix
 		if rest:sub(1, #prefix) ~= prefix then
 			table.insert(result, line)
 			goto continue
 		end
 
 		local after_prefix = rest:sub(#prefix + 1)
-
-		-- Strip suffix from end if present
 		if suffix ~= "" then
 			local s = after_prefix:gsub("%s+$", "")
 			if s:sub(-#suffix) == suffix then
@@ -586,37 +609,28 @@ function M.strip_decoration(lines, prefix, suffix)
 			goto continue
 		end
 
-		-- All box-drawing chars we use are 3 bytes in UTF-8
 		local first = trimmed:sub(1, 3)
 		local last = trimmed:sub(-3)
-		local inner_bytes = trimmed:sub(4, -4) -- everything between first and last 3-byte char
+		local inner_bytes = trimmed:sub(4, -4)
 
-		-- Box top border: ╭───╮ or ┏━━━┓
+		-- Box top border
 		if
 			(first == "╭" and last == "╮" and only_repeated(inner_bytes, "─"))
 			or (first == "┏" and last == "┓" and only_repeated(inner_bytes, "━"))
 		then
 			-- discard
-
-			-- Box bottom border: ╰───╯ or ┗━━━┛
 		elseif
 			(first == "╰" and last == "╯" and only_repeated(inner_bytes, "─"))
 			or (first == "┗" and last == "┛" and only_repeated(inner_bytes, "━"))
 		then
 			-- discard
-
-			-- Pure separator/divider: all ─ or all ━
 		elseif only_repeated(trimmed, "─") or only_repeated(trimmed, "━") then
 			-- discard
-
-			-- Box content: │...│ or ┃...┃
 		elseif (first == "│" and last == "│") or (first == "┃" and last == "┃") then
 			local inner = vim.trim(inner_bytes)
 			if inner ~= "" then
 				table.insert(result, indent .. prefix .. " " .. inner)
 			end
-
-		-- Centered title: ──── Text ──── or ━━━━ Text ━━━━
 		elseif first == "─" or first == "━" then
 			local dash = first
 			local after_dashes = strip_leading(trimmed, dash)
@@ -630,9 +644,7 @@ function M.strip_decoration(lines, prefix, suffix)
 					end
 				end
 			end
-			-- Only dashes or didn't match title structure: discard as separator
 		else
-			-- Not decoration, keep as-is
 			table.insert(result, line)
 		end
 
@@ -641,29 +653,10 @@ function M.strip_decoration(lines, prefix, suffix)
 	return result
 end
 
---- Create a separator line matching the last box/title width.
----@param style string|nil border style: "thin" (default) or "heavy"
----@return string[]
-function M.create_separator(style)
-	local b = borders[style or "thin"] or borders.thin
-	local prefix, suffix = get_comment_parts()
-	local line_pad = string.rep(" ", M.config.line_padding)
-	local suffix_part = suffix ~= "" and (line_pad .. suffix) or ""
-	local width = M._last_visual_width or M.config.default_width
-	local overshoot = M.config.line_overshoot
-
-	local line = prefix .. line_pad .. string.rep(b.h, width + (overshoot * 2)) .. suffix_part
-	if M._last_indent ~= "" then
-		line = M._last_indent .. line
-	end
-	return { line }
-end
-
 --  ──────────────────────────────────────────────────────────────────
 --                      Redraw infrastructure
 --  ──────────────────────────────────────────────────────────────────
 
---- Block descriptor for redraw: a contiguous run of decorated lines.
 ---@class DecoBlock
 ---@field start_row integer 1-indexed buffer line
 ---@field end_row integer 1-indexed buffer line (inclusive)
@@ -671,12 +664,11 @@ end
 ---@field texts string[] extracted plain-text content (empty for separators)
 ---@field indent string leading whitespace
 
---- Scan a range of buffer lines and return a list of decorated blocks.
---- Each block records its row span, decoration kind, extracted content, and indent.
----@param buf_lines string[] raw buffer lines (1-indexed relative to line1)
+--- Scan buffer lines and return a list of decorated blocks.
+---@param buf_lines string[]
 ---@param line1 integer 1-indexed buffer offset for the first line in buf_lines
----@param prefix string comment prefix
----@param suffix string comment suffix
+---@param prefix string
+---@param suffix string
 ---@return DecoBlock[]
 local function find_decorated_blocks(buf_lines, line1, prefix, suffix)
 	local blocks = {}
@@ -686,7 +678,6 @@ local function find_decorated_blocks(buf_lines, line1, prefix, suffix)
 		local dtype = classify_decorated_line(raw, prefix, suffix)
 		local row = line1 + i - 1
 
-		-- Thin box
 		if dtype == DTYPE.BOX_TOP_THIN then
 			local texts = {}
 			local indent = get_indent(raw)
@@ -709,13 +700,11 @@ local function find_decorated_blocks(buf_lines, line1, prefix, suffix)
 					i = j + 1
 					goto next_line
 				else
-					break -- malformed box, skip the top line
+					break
 				end
 				j = j + 1
 			end
 			i = i + 1
-
-		-- Fat box
 		elseif dtype == DTYPE.BOX_TOP_FAT then
 			local texts = {}
 			local indent = get_indent(raw)
@@ -743,8 +732,6 @@ local function find_decorated_blocks(buf_lines, line1, prefix, suffix)
 				j = j + 1
 			end
 			i = i + 1
-
-		-- Thin centered title (group consecutive ones)
 		elseif dtype == DTYPE.LINE_THIN then
 			local texts = {}
 			local indent = get_indent(raw)
@@ -769,8 +756,6 @@ local function find_decorated_blocks(buf_lines, line1, prefix, suffix)
 				indent = indent,
 			})
 			i = j
-
-		-- Fat centered title (group consecutive ones)
 		elseif dtype == DTYPE.LINE_FAT then
 			local texts = {}
 			local indent = get_indent(raw)
@@ -795,8 +780,6 @@ local function find_decorated_blocks(buf_lines, line1, prefix, suffix)
 				indent = indent,
 			})
 			i = j
-
-		-- Thin separator/divider
 		elseif dtype == DTYPE.SEP_THIN then
 			table.insert(blocks, {
 				start_row = row,
@@ -806,8 +789,6 @@ local function find_decorated_blocks(buf_lines, line1, prefix, suffix)
 				indent = get_indent(raw),
 			})
 			i = i + 1
-
-		-- Fat separator/divider
 		elseif dtype == DTYPE.SEP_FAT then
 			table.insert(blocks, {
 				start_row = row,
@@ -828,7 +809,7 @@ end
 
 --- Compute the visual width a list of text lines would require for a box.
 ---@param texts string[]
----@return integer visual_width (content_w + 2)
+---@return integer
 local function box_visual_width_for(texts)
 	local inner = M.config.inner_box_padding
 	local max_w = 0
@@ -843,7 +824,7 @@ end
 
 --- Compute the visual width a list of text lines would require for a centered line.
 ---@param texts string[]
----@return integer visual_width
+---@return integer
 local function line_visual_width_for(texts)
 	local inner_pad = M.config.inner_line_padding
 	local max_tw = 0
@@ -858,10 +839,12 @@ end
 
 --- Redraw all decorated elements in the given buffer range.
 --- Scans the full file to determine the maximum visual width, then re-renders
---- every block in the target range at that width.
+--- every block in the target range at that width. All replacements are grouped
+--- into a single undo entry.
 ---@param target_line1 integer 1-indexed start of range to redraw
 ---@param target_line2 integer 1-indexed end of range to redraw (inclusive)
 function M.redraw_range(target_line1, target_line2)
+	local state = get_buf_state()
 	local prefix, suffix = get_comment_parts()
 	local total = vim.api.nvim_buf_line_count(0)
 
@@ -869,7 +852,7 @@ function M.redraw_range(target_line1, target_line2)
 	local all_lines = vim.api.nvim_buf_get_lines(0, 0, total, false)
 	local all_blocks = find_decorated_blocks(all_lines, 1, prefix, suffix)
 
-	local global_max = M._max_visual_width or 0
+	local global_max = state.max_visual_width or 0
 	for _, blk in ipairs(all_blocks) do
 		local w = 0
 		if blk.kind == "box_thin" or blk.kind == "box_fat" then
@@ -882,14 +865,23 @@ function M.redraw_range(target_line1, target_line2)
 		end
 	end
 
-	-- Set the tracked widths so create_box / create_centered_line / create_separator
-	-- all use the global max as their floor.
 	if global_max > 0 then
-		M._max_visual_width = global_max
-		M._last_visual_width = global_max
+		state.max_visual_width = global_max
+		state.last_visual_width = global_max
 	end
 
-	-- Phase 2: collect only the blocks that overlap the target range.
+	-- Phase 2: expand target range to fully include any partially-selected blocks.
+	for _, blk in ipairs(all_blocks) do
+		if blk.end_row >= target_line1 and blk.start_row <= target_line2 then
+			if blk.start_row < target_line1 then
+				target_line1 = blk.start_row
+			end
+			if blk.end_row > target_line2 then
+				target_line2 = blk.end_row
+			end
+		end
+	end
+
 	local target_blocks = {}
 	for _, blk in ipairs(all_blocks) do
 		if blk.end_row >= target_line1 and blk.start_row <= target_line2 then
@@ -898,14 +890,14 @@ function M.redraw_range(target_line1, target_line2)
 	end
 
 	-- Phase 3: re-render from bottom to top to keep line numbers stable.
+	-- All replacements are joined into a single undo entry.
+	local first_write = true
 	for i = #target_blocks, 1, -1 do
 		local blk = target_blocks[i]
-		M._last_indent = blk.indent
 
 		local new_lines
 		if blk.kind == "box_thin" then
 			new_lines = M.create_box(blk.texts, true, "thin")
-			-- Do NOT append a trailing blank line during redraw
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "box_fat" then
 			new_lines = M.create_box(blk.texts, true, "heavy")
@@ -918,18 +910,18 @@ function M.redraw_range(target_line1, target_line2)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "sep_thin" then
 			new_lines = M.create_separator("thin")
-			if blk.indent ~= "" and not new_lines[1]:match("^%s") then
-				new_lines = indent_lines(new_lines, blk.indent)
-			end
+			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "sep_fat" then
 			new_lines = M.create_separator("heavy")
-			if blk.indent ~= "" and not new_lines[1]:match("^%s") then
-				new_lines = indent_lines(new_lines, blk.indent)
-			end
+			new_lines = indent_lines(new_lines, blk.indent)
 		end
 
 		if new_lines and #new_lines > 0 then
+			if not first_write then
+				vim.cmd("silent! undojoin")
+			end
 			vim.api.nvim_buf_set_lines(0, blk.start_row - 1, blk.end_row, false, new_lines)
+			first_write = false
 		end
 	end
 end
@@ -938,10 +930,20 @@ end
 --                           Plugin setup
 --  ──────────────────────────────────────────────────────────────────
 
---- Plugin setup: registers user commands.
+--- Plugin setup: registers user commands and autocmds.
 ---@param opts table|nil
 function M.setup(opts)
 	M.config = vim.tbl_deep_extend("force", M.config, opts or {})
+
+	-- Clean up buffer state when buffers are wiped to avoid leaking memory.
+	vim.api.nvim_create_autocmd({ "BufWipeout", "BufDelete" }, {
+		group = vim.api.nvim_create_augroup("PrettyCommentCleanup", { clear = true }),
+		callback = function(ev)
+			M._buf_state[ev.buf] = nil
+		end,
+	})
+
+	-- ── Box commands ──────────────────────────────────────────────
 
 	vim.api.nvim_create_user_command("CommentBox", function(args)
 		local prefix = get_comment_parts()
@@ -956,12 +958,14 @@ function M.setup(opts)
 
 		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
 		local indent = get_common_indent(raw_lines)
-		M._last_indent = indent
+		get_buf_state().last_indent = indent
 
 		local stripped = strip_comments_from_lines(raw_lines, prefix)
 		local result = M.create_box(stripped, true)
 		result = indent_lines(result, indent)
-		table.insert(result, "")
+		if M.config.trailing_blank then
+			table.insert(result, "")
+		end
 		vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
 		local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
 		vim.api.nvim_win_set_cursor(0, { target, 0 })
@@ -980,16 +984,20 @@ function M.setup(opts)
 
 		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
 		local indent = get_common_indent(raw_lines)
-		M._last_indent = indent
+		get_buf_state().last_indent = indent
 
 		local stripped = strip_comments_from_lines(raw_lines, prefix)
 		local result = M.create_box(stripped, true, "heavy")
 		result = indent_lines(result, indent)
-		table.insert(result, "")
+		if M.config.trailing_blank then
+			table.insert(result, "")
+		end
 		vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
 		local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
 		vim.api.nvim_win_set_cursor(0, { target, 0 })
 	end, { range = true, desc = "Wrap selection in a fat comment box" })
+
+	-- ── Centered title commands ───────────────────────────────────
 
 	vim.api.nvim_create_user_command("CommentLine", function(args)
 		local prefix = get_comment_parts()
@@ -1004,12 +1012,14 @@ function M.setup(opts)
 
 		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
 		local indent = get_common_indent(raw_lines)
-		M._last_indent = indent
+		get_buf_state().last_indent = indent
 
 		local stripped = strip_comments_from_lines(raw_lines, prefix)
 		local result = M.create_centered_line(stripped)
 		result = indent_lines(result, indent)
-		table.insert(result, "")
+		if M.config.trailing_blank then
+			table.insert(result, "")
+		end
 		vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
 		local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
 		vim.api.nvim_win_set_cursor(0, { target, 0 })
@@ -1028,56 +1038,58 @@ function M.setup(opts)
 
 		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
 		local indent = get_common_indent(raw_lines)
-		M._last_indent = indent
+		get_buf_state().last_indent = indent
 
 		local stripped = strip_comments_from_lines(raw_lines, prefix)
 		local result = M.create_centered_line(stripped, "heavy")
 		result = indent_lines(result, indent)
-		table.insert(result, "")
+		if M.config.trailing_blank then
+			table.insert(result, "")
+		end
 		vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
 		local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
 		vim.api.nvim_win_set_cursor(0, { target, 0 })
 	end, { range = true, desc = "Create fat centered comment title lines" })
 
+	-- ── Separator / divider commands (insert below cursor) ────────
+
 	vim.api.nvim_create_user_command("CommentSep", function()
+		local state = get_buf_state()
 		local row = vim.api.nvim_win_get_cursor(0)[1]
 		local result = M.create_separator()
-		vim.api.nvim_buf_set_lines(0, row - 1, row, false, result)
-	end, { desc = "Insert a comment separator line" })
+		result = indent_lines(result, state.last_indent)
+		vim.api.nvim_buf_set_lines(0, row, row, false, result)
+		vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
+	end, { desc = "Insert a comment separator below the current line" })
 
 	vim.api.nvim_create_user_command("CommentSepFat", function()
+		local state = get_buf_state()
 		local row = vim.api.nvim_win_get_cursor(0)[1]
 		local result = M.create_separator("heavy")
-		vim.api.nvim_buf_set_lines(0, row - 1, row, false, result)
-	end, { desc = "Insert a fat comment separator line" })
+		result = indent_lines(result, state.last_indent)
+		vim.api.nvim_buf_set_lines(0, row, row, false, result)
+		vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
+	end, { desc = "Insert a fat comment separator below the current line" })
 
 	vim.api.nvim_create_user_command("CommentDiv", function()
-		local prefix, suffix = get_comment_parts()
-		local line_pad = string.rep(" ", M.config.line_padding)
-		local suffix_part = suffix ~= "" and (line_pad .. suffix) or ""
+		local state = get_buf_state()
 		local row = vim.api.nvim_win_get_cursor(0)[1]
-		local width = M._max_visual_width or M.config.default_width
-		local overshoot = M.config.line_overshoot
-		local line = prefix .. line_pad .. string.rep("─", width + (overshoot * 2)) .. suffix_part
-		if M._last_indent ~= "" then
-			line = M._last_indent .. line
-		end
-		vim.api.nvim_buf_set_lines(0, row - 1, row, false, { line })
-	end, { desc = "Insert a comment divider (largest seen width)" })
+		local result = M.create_divider()
+		result = indent_lines(result, state.last_indent)
+		vim.api.nvim_buf_set_lines(0, row, row, false, result)
+		vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
+	end, { desc = "Insert a comment divider below the current line (largest seen width)" })
 
 	vim.api.nvim_create_user_command("CommentDivFat", function()
-		local prefix, suffix = get_comment_parts()
-		local line_pad = string.rep(" ", M.config.line_padding)
-		local suffix_part = suffix ~= "" and (line_pad .. suffix) or ""
+		local state = get_buf_state()
 		local row = vim.api.nvim_win_get_cursor(0)[1]
-		local width = M._max_visual_width or M.config.default_width
-		local overshoot = M.config.line_overshoot
-		local line = prefix .. line_pad .. string.rep("━", width + (overshoot * 2)) .. suffix_part
-		if M._last_indent ~= "" then
-			line = M._last_indent .. line
-		end
-		vim.api.nvim_buf_set_lines(0, row - 1, row, false, { line })
-	end, { desc = "Insert a fat comment divider (largest seen width)" })
+		local result = M.create_divider("heavy")
+		result = indent_lines(result, state.last_indent)
+		vim.api.nvim_buf_set_lines(0, row, row, false, result)
+		vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
+	end, { desc = "Insert a fat comment divider below the current line (largest seen width)" })
+
+	-- ── Strip command ─────────────────────────────────────────────
 
 	vim.api.nvim_create_user_command("CommentStrip", function(args)
 		local prefix, suffix = get_comment_parts()
@@ -1093,7 +1105,6 @@ function M.setup(opts)
 		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
 		local result = M.strip_decoration(raw_lines, prefix, suffix)
 
-		-- Trim trailing empty lines left over from the box's blank line
 		while #result > 0 and result[#result]:match("^%s*$") do
 			table.remove(result)
 		end
@@ -1103,18 +1114,27 @@ function M.setup(opts)
 		vim.api.nvim_win_set_cursor(0, { target, 0 })
 	end, { range = true, desc = "Strip box/title decoration back to plain comments" })
 
+	-- ── Redraw command ────────────────────────────────────────────
+
 	vim.api.nvim_create_user_command("CommentRedraw", function(args)
 		local line1, line2 = args.line1, args.line2
 
 		if args.range == 0 then
-			-- Normal mode: redraw entire file
 			local total = vim.api.nvim_buf_line_count(0)
 			M.redraw_range(1, total)
 		else
-			-- Visual mode: redraw within selection, auto-expanding to complete blocks
+			-- Visual mode: auto-expands to complete blocks inside redraw_range
 			M.redraw_range(line1, line2)
 		end
 	end, { range = true, desc = "Redraw all comment decorations to a uniform width" })
+
+	-- ── Reset command ─────────────────────────────────────────────
+
+	vim.api.nvim_create_user_command("CommentReset", function()
+		local buf = vim.api.nvim_get_current_buf()
+		M._buf_state[buf] = nil
+		vim.notify("pretty-comment: width tracking reset for this buffer", vim.log.levels.INFO)
+	end, { desc = "Reset tracked comment widths for the current buffer" })
 end
 
 return M
