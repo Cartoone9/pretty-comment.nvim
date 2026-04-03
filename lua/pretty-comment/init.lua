@@ -303,48 +303,136 @@ end
 --- Recognizes thin boxes (╭╮╰╯│─), heavy boxes (┏┓┗┛┃━), centered titles (─ Text ─),
 --- and pure separator/divider lines. Border-only and separator lines are discarded;
 --- content lines have their box chrome removed.
+---
+--- NOTE: All box-drawing characters are 3-byte UTF-8 sequences. Lua patterns operate
+--- on raw bytes, so character classes like [╭┏] silently corrupt multi-byte chars.
+--- This function uses plain string comparison (sub/find) instead.
 ---@param lines string[]
 ---@param prefix string comment prefix
 ---@param suffix string comment suffix
 ---@return string[]
 function M.strip_decoration(lines, prefix, suffix)
-	local esc_prefix = vim.pesc(prefix)
-	local esc_suffix = suffix ~= "" and ("%s*" .. vim.pesc(suffix)) or ""
+	--- Check if a string consists entirely of repetitions of a multi-byte char.
+	---@param s string
+	---@param ch string the multi-byte character to check for
+	---@return boolean
+	local function only_repeated(s, ch)
+		local len = #ch
+		if #s == 0 or #s % len ~= 0 then
+			return false
+		end
+		for i = 1, #s, len do
+			if s:sub(i, i + len - 1) ~= ch then
+				return false
+			end
+		end
+		return true
+	end
 
-	-- Pattern fragments for both border styles
-	local border_top = "^(%s*)" .. esc_prefix .. "%s*[╭┏][─━]+[╮┓]" .. esc_suffix .. "%s*$"
-	local border_bot = "^(%s*)" .. esc_prefix .. "%s*[╰┗][─━]+[╯┛]" .. esc_suffix .. "%s*$"
-	local content_line = "^(%s*)" .. esc_prefix .. "%s*[│┃](.+)[│┃]" .. esc_suffix .. "%s*$"
-	local separator = "^(%s*)" .. esc_prefix .. "%s*[─━]+%s*$"
-	local separator_suffix = "^(%s*)" .. esc_prefix .. "%s*[─━]+" .. esc_suffix .. "%s*$"
-	local centered_title = "^(%s*)" .. esc_prefix .. "%s+[─━]+ (.+) [─━]+" .. esc_suffix .. "%s*$"
+	--- Strip leading repetitions of a multi-byte char, return the remainder.
+	---@param s string
+	---@param ch string
+	---@return string
+	local function strip_leading(s, ch)
+		local len = #ch
+		local i = 1
+		while s:sub(i, i + len - 1) == ch do
+			i = i + len
+		end
+		return s:sub(i)
+	end
+
+	--- Strip trailing repetitions of a multi-byte char, return the remainder.
+	---@param s string
+	---@param ch string
+	---@return string
+	local function strip_trailing(s, ch)
+		local len = #ch
+		local j = #s
+		while j >= len and s:sub(j - len + 1, j) == ch do
+			j = j - len
+		end
+		return s:sub(1, j)
+	end
 
 	local result = {}
 	for _, line in ipairs(lines) do
-		-- Top/bottom borders: discard
-		if line:match(border_top) or line:match(border_bot) then
-			-- skip
-			-- Pure separator/divider lines: discard
-		elseif line:match(separator) or (suffix ~= "" and line:match(separator_suffix)) then
-			-- skip
-			-- Content inside a box: extract text
-		elseif line:match(content_line) then
-			local indent, text = line:match(content_line)
-			text = vim.trim(text)
-			if text ~= "" then
-				table.insert(result, indent .. prefix .. " " .. text)
+		local indent = line:match("^(%s*)") or ""
+		local rest = line:sub(#indent + 1)
+
+		-- Must start with comment prefix
+		if rest:sub(1, #prefix) ~= prefix then
+			table.insert(result, line)
+			goto continue
+		end
+
+		local after_prefix = rest:sub(#prefix + 1)
+
+		-- Strip suffix from end if present
+		if suffix ~= "" then
+			local s = after_prefix:gsub("%s+$", "")
+			if s:sub(-#suffix) == suffix then
+				after_prefix = s:sub(1, -#suffix - 1)
 			end
-		-- Centered title line: extract title text
-		elseif line:match(centered_title) then
-			local indent, text = line:match(centered_title)
-			text = vim.trim(text)
-			if text ~= "" then
-				table.insert(result, indent .. prefix .. " " .. text)
+		end
+
+		local trimmed = vim.trim(after_prefix)
+		if trimmed == "" then
+			table.insert(result, line)
+			goto continue
+		end
+
+		-- All box-drawing chars we use are 3 bytes in UTF-8
+		local first = trimmed:sub(1, 3)
+		local last = trimmed:sub(-3)
+		local inner_bytes = trimmed:sub(4, -4) -- everything between first and last 3-byte char
+
+		-- Box top border: ╭───╮ or ┏━━━┓
+		if
+			(first == "╭" and last == "╮" and only_repeated(inner_bytes, "─"))
+			or (first == "┏" and last == "┓" and only_repeated(inner_bytes, "━"))
+		then
+			-- discard
+
+			-- Box bottom border: ╰───╯ or ┗━━━┛
+		elseif
+			(first == "╰" and last == "╯" and only_repeated(inner_bytes, "─"))
+			or (first == "┗" and last == "┛" and only_repeated(inner_bytes, "━"))
+		then
+			-- discard
+
+			-- Pure separator/divider: all ─ or all ━
+		elseif only_repeated(trimmed, "─") or only_repeated(trimmed, "━") then
+			-- discard
+
+			-- Box content: │...│ or ┃...┃
+		elseif (first == "│" and last == "│") or (first == "┃" and last == "┃") then
+			local inner = vim.trim(inner_bytes)
+			if inner ~= "" then
+				table.insert(result, indent .. prefix .. " " .. inner)
 			end
+
+		-- Centered title: ──── Text ──── or ━━━━ Text ━━━━
+		elseif first == "─" or first == "━" then
+			local dash = first
+			local after_dashes = strip_leading(trimmed, dash)
+			if after_dashes:sub(1, 1) == " " then
+				local before_trailing = strip_trailing(after_dashes, dash)
+				if before_trailing:sub(-1) == " " then
+					local text = vim.trim(before_trailing)
+					if text ~= "" then
+						table.insert(result, indent .. prefix .. " " .. text)
+						goto continue
+					end
+				end
+			end
+			-- Only dashes or didn't match title structure: discard as separator
 		else
 			-- Not decoration, keep as-is
 			table.insert(result, line)
 		end
+
+		::continue::
 	end
 	return result
 end
