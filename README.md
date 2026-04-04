@@ -52,7 +52,7 @@ Eight style commands (thin and fat), plus remove, equalize, and reset utilities.
 
 **`:CommentSep`** / **`:CommentSepFat`** insert a separator line **below** the cursor, matching the width of the **last** box or title you created.
 
-**`:CommentDiv`** / **`:CommentDivFat`** insert a divider line **below** the cursor, matching the width of the **largest** box or title you created (never shrinks).
+**`:CommentDiv`** / **`:CommentDivFat`** insert a divider line **below** the cursor, matching the width of the **widest** box or title currently in the buffer.
 
 ```python
 # Thin:

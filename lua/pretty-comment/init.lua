@@ -563,7 +563,33 @@ function M.create_separator(style)
 	return { prefix .. line_pad .. string.rep(b.h, width + (overshoot * 2)) .. suffix_part }
 end
 
---- Create a divider line matching the largest box/title width ever seen in this buffer.
+--- Scan the current buffer and return the widest visual width among all
+--- content-bearing decorated elements (boxes and centered titles).
+--- Returns nil when no decorated elements are found.
+---@return integer|nil
+local function scan_buffer_max_width()
+	local prefix, suffix = get_comment_parts()
+	local total = vim.api.nvim_buf_line_count(0)
+	local all_lines = vim.api.nvim_buf_get_lines(0, 0, total, false)
+	local blocks = find_decorated_blocks(all_lines, 1, prefix, suffix)
+
+	local max_w = nil
+	for _, blk in ipairs(blocks) do
+		local w = 0
+		if blk.kind == "box_thin" or blk.kind == "box_fat" then
+			w = box_visual_width_for(blk.texts)
+		elseif blk.kind == "line_thin" or blk.kind == "line_fat" then
+			w = line_visual_width_for(blk.texts)
+		end
+		if w > 0 and (max_w == nil or w > max_w) then
+			max_w = w
+		end
+	end
+	return max_w
+end
+
+--- Create a divider line matching the widest box/title currently in the buffer.
+--- Falls back to default_width when no decorated elements exist.
 --- Does NOT apply indentation; the caller is responsible for that.
 ---@param style string|nil border style: "thin" (default) or "heavy"
 ---@return string[]
@@ -573,8 +599,12 @@ function M.create_divider(style)
 	local prefix, suffix = get_comment_parts()
 	local line_pad = string.rep(" ", M.config.line_padding)
 	local suffix_part = suffix ~= "" and (line_pad .. suffix) or ""
-	local width = state.max_visual_width or M.config.default_width
+	local width = scan_buffer_max_width() or M.config.default_width
+	width = math.max(width, M.config.min_width)
 	local overshoot = M.config.line_overshoot
+
+	-- Keep tracked state in sync with actual buffer contents.
+	state.max_visual_width = width
 
 	return { prefix .. line_pad .. string.rep(b.h, width + (overshoot * 2)) .. suffix_part }
 end
