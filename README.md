@@ -6,7 +6,7 @@ A small Neovim plugin that wraps comments into Unicode boxes, centered titles, a
 
 ## What it does
 
-Twelve commands in two styles (thin and fat), plus strip, redraw, and reset commands. All are comment-prefix-aware.
+Eight style commands (thin and fat), plus remove, equalize, and reset utilities. All are comment-prefix-aware.
 
 ### Boxes
 
@@ -66,7 +66,7 @@ Twelve commands in two styles (thin and fat), plus strip, redraw, and reset comm
 
 ### Strip
 
-**`:CommentStrip`** removes any box, title, separator, or divider decoration and replaces it with plain comments. Works on both thin and fat styles. In normal mode it auto-expands; works with visual selections too.
+**`:CommentRemove`** removes any box, title, separator, or divider decoration and replaces it with plain comments. Works on both thin and fat styles. In normal mode it auto-expands; works with visual selections too.
 
 ```python
 # Before:
@@ -80,13 +80,13 @@ Twelve commands in two styles (thin and fat), plus strip, redraw, and reset comm
 
 ---
 
-### Redraw
+### Equalize
 
-**`:CommentRedraw`** re-renders all decorated elements (boxes, centered titles, separators, dividers) to a uniform width.
+**`:CommentEqualize`** re-renders all decorated elements (boxes, centered titles, separators, dividers) to a uniform width.
 
-In **normal mode** it redraws the entire file. In **visual mode** it redraws only the selected elements, auto-expanding to include any partially-selected blocks. All changes from a single redraw are grouped into one undo step.
+In **normal mode** it redraws the entire file. In **visual mode** it redraws only the selected elements, auto-expanding to include any partially-selected blocks. All changes from a single equalize are grouped into one undo step.
 
-The target width is determined by scanning the entire file for the widest content across all elements, so everything ends up consistent regardless of which range you redraw.
+The target width is determined by scanning the entire file for the widest content across all elements, so everything ends up consistent regardless of which range you equalize.
 
 ```python
 # Before (inconsistent widths):
@@ -98,7 +98,7 @@ The target width is determined by scanning the entire file for the widest conten
 #    │            A much longer comment in a box            │
 #    ╰──────────────────────────────────────────────────────╯
 
-# After :CommentRedraw (uniform width):
+# After :CommentEqualize (uniform width):
 #    ╭──────────────────────────────────────────────────────╮
 #    │                        Short                         │
 #    ╰──────────────────────────────────────────────────────╯
@@ -112,15 +112,17 @@ The target width is determined by scanning the entire file for the widest conten
 
 ### Reset
 
-**`:CommentReset`** clears the tracked minimum width for the current buffer and shows a notification. Useful when an accidentally wide box has inflated the minimum and you want to start fresh. Follow up with `:CommentRedraw` to re-normalize the file at the new (smaller) natural width.
+**`:CommentReset`** clears the tracked width state (last width, largest width) for the current buffer and shows a notification. Mainly useful if dividers are picking up an unwanted width from a previous box.
 
 ---
 
 ### Width behavior
 
-Boxes and centered titles share a tracked minimum width **per buffer**. When you create a box or title that requires a wider frame than any previous one in that buffer, the minimum ratchets up. All subsequent boxes and titles will be at least that wide, keeping your file visually consistent as you work. Switching buffers won't carry width state across.
+Boxes and centered titles have a configurable minimum width (`min_width`, defaults to 30) so that short text doesn't produce tiny decorations. Beyond that floor, each element sizes itself to fit its content. Elements created at different times may end up with different widths.
 
-The tracked width resets when the buffer is wiped or when you run `:CommentReset`. Use `:CommentRedraw` to re-establish consistency across the file at any time.
+To unify widths across a file, use `:CommentEqualize` (`gce`). It scans the entire file, finds the widest element, and re-renders everything at that width. In visual mode it targets only the selected elements (auto-expanding to complete blocks).
+
+Separators use the width of the last box or title you created. Dividers use the largest width seen in the buffer so far. Both track state per-buffer, so switching files won't carry widths across.
 
 Leading and trailing whitespace on input lines is trimmed before measuring and rendering, so stray spaces won't inflate your boxes.
 
@@ -153,10 +155,11 @@ vim.keymap.set("n", "gcs", "<cmd>CommentSep<CR>", { silent = true, desc = "Comme
 vim.keymap.set("n", "gcS", "<cmd>CommentSepFat<CR>", { silent = true, desc = "Fat comment separator" })
 vim.keymap.set("n", "gcd", "<cmd>CommentDiv<CR>", { silent = true, desc = "Comment divider" })
 vim.keymap.set("n", "gcD", "<cmd>CommentDivFat<CR>", { silent = true, desc = "Fat comment divider" })
-vim.keymap.set("v", "gcr", ":CommentStrip<CR>", { silent = true, desc = "Strip comment decoration" })
-vim.keymap.set("n", "gcr", "<cmd>CommentStrip<CR>", { silent = true, desc = "Strip comment decoration (line)" })
-vim.keymap.set("v", "gcR", ":CommentRedraw<CR>", { silent = true, desc = "Redraw comment decoration (selection)" })
-vim.keymap.set("n", "gcR", "<cmd>CommentRedraw<CR>", { silent = true, desc = "Redraw all comment decoration" })
+vim.keymap.set("v", "gcr", ":CommentRemove<CR>", { silent = true, desc = "Strip comment decoration" })
+vim.keymap.set("n", "gcr", "<cmd>CommentRemove<CR>", { silent = true, desc = "Strip comment decoration (line)" })
+vim.keymap.set("v", "gce", ":CommentEqualize<CR>", { silent = true, desc = "Equalize comment decoration (selection)" })
+vim.keymap.set("n", "gce", "<cmd>CommentEqualize<CR>", { silent = true, desc = "Equalize all comment decoration" })
+vim.keymap.set("n", "gcX", "<cmd>CommentReset<CR>", { silent = true, desc = "Reset comment width tracking" })
 --  ───────────────────────────────────────────────────────────────────────────────────────────────────
 --    ╭─────────────────────────────────────────────────────────────────────────────────────────────╮
 --    │          gc* keybinds above add a delay to visual 'gc' comment toggle. Use 'gcc'            │
@@ -189,10 +192,11 @@ return {
 		{ "gcS", "<cmd>CommentSepFat<CR>", mode = "n", desc = "Fat comment separator", silent = true },
 		{ "gcd", "<cmd>CommentDiv<CR>", mode = "n", desc = "Comment divider", silent = true },
 		{ "gcD", "<cmd>CommentDivFat<CR>", mode = "n", desc = "Fat comment divider", silent = true },
-		{ "gcr", ":CommentStrip<CR>", mode = "v", desc = "Strip comment decoration", silent = true },
-		{ "gcr", "<cmd>CommentStrip<CR>", mode = "n", desc = "Strip comment decoration (line)", silent = true },
-		{ "gcR", ":CommentRedraw<CR>", mode = "v", desc = "Redraw comment decoration (selection)", silent = true },
-		{ "gcR", "<cmd>CommentRedraw<CR>", mode = "n", desc = "Redraw all comment decoration", silent = true },
+		{ "gcr", ":CommentRemove<CR>", mode = "v", desc = "Strip comment decoration", silent = true },
+		{ "gcr", "<cmd>CommentRemove<CR>", mode = "n", desc = "Strip comment decoration (line)", silent = true },
+		{ "gce", ":CommentEqualize<CR>", mode = "v", desc = "Equalize comment decoration (selection)", silent = true },
+		{ "gce", "<cmd>CommentEqualize<CR>", mode = "n", desc = "Equalize all comment decoration", silent = true },
+		{ "gcX", "<cmd>CommentReset<CR>", mode = "n", desc = "Reset comment width tracking", silent = true },
 	},
 	--  ───────────────────────────────────────────────────────────────────────────────────────────────────
 	--    ╭─────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -219,11 +223,12 @@ These are the defaults. Pass any overrides to `setup()` or through `opts` in laz
 ```lua
 require("pretty-comment").setup({
   box_padding = 4,        -- spaces between comment prefix and box border
-  inner_box_padding = 12, -- spaces inside the box around text
+  inner_box_padding = 4, -- spaces inside the box around text
   line_padding = 2,       -- spaces between comment prefix and dashes
   inner_line_padding = 1, -- spaces between dashes and text in titles
   line_overshoot = 2,     -- extra dashes per side on separators/dividers
-  default_width = 60,     -- fallback width when no prior box/title sets context
+  default_width = 60,     -- fallback width for separators/dividers when no prior box exists
+  min_width = 30,         -- minimum visual width for boxes and centered titles
   trailing_blank = true,  -- append a blank line after box/title creation
 })
 ```
@@ -233,11 +238,12 @@ Or directly through `opts` in lazy.nvim:
 ```lua
 opts = {
   box_padding = 4,
-  inner_box_padding = 12,
+  inner_box_padding = 4,
   line_padding = 2,
   inner_line_padding = 1,
   line_overshoot = 2,
   default_width = 60,
+  min_width = 30,
   trailing_blank = true,
 },
 ```
@@ -254,11 +260,11 @@ opts = {
 | `:CommentSepFat` | `gcS` | Heavy separator below cursor (last width) |
 | `:CommentDiv` | `gcd` | Thin divider below cursor (largest width) |
 | `:CommentDivFat` | `gcD` | Heavy divider below cursor (largest width) |
-| `:CommentStrip` | `gcr` | Strip any decoration back to plain comments |
-| `:CommentRedraw` | `gcR` | Redraw decorations to uniform width (file or selection) |
-| `:CommentReset` | | Reset tracked width for this buffer |
+| `:CommentRemove` | `gcr` | Strip any decoration back to plain comments |
+| `:CommentEqualize` | `gce` | Equalize decorations to uniform width (file or selection) |
+| `:CommentReset` | `gcX` | Reset tracked width for this buffer |
 
-Box, line, strip, and redraw commands work in both normal mode (auto-expands to the full comment block) and visual mode. Redraw in normal mode targets the entire file; in visual mode it targets only the selected elements (auto-expanding to complete blocks). All width tracking is per-buffer.
+Box, line, strip, and redraw commands work in both normal mode (auto-expands to the full comment block) and visual mode. Equalize in normal mode targets the entire file; in visual mode it targets only the selected elements (auto-expanding to complete blocks).
 
 ## Supported languages
 

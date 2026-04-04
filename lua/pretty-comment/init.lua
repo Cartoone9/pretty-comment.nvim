@@ -2,11 +2,12 @@ local M = {}
 
 M.config = {
 	box_padding = 4, -- spaces between comment glyph and box border
-	inner_box_padding = 12, -- spaces inside box around text
+	inner_box_padding = 4, -- spaces inside box around text
 	line_padding = 2, -- spaces between comment glyph and dashes (titles/separators/dividers)
 	inner_line_padding = 1, -- spaces between dashes and text in centered titles
 	line_overshoot = 2, -- extra dashes per side on separators/dividers beyond title width
-	default_width = 60, -- fallback width when no prior box/title sets context
+	default_width = 60, -- fallback width for separators/dividers when no prior box exists
+	min_width = 30, -- minimum visual width for boxes and centered titles
 	trailing_blank = true, -- append a blank line after box/title creation
 }
 
@@ -400,13 +401,14 @@ local borders = {
 --  ──────────────────────────────────────────────────────────────────
 
 --- Create a box around the given lines.
---- Enforces a minimum width from the buffer's max_visual_width so boxes stay consistent.
+--- Enforces a minimum visual width from config.min_width (or target_width if given).
 --- Does NOT apply indentation; the caller is responsible for that.
 ---@param lines string[]
 ---@param centered boolean|nil center text inside the box (default true)
 ---@param style string|nil border style: "thin" (default) or "heavy"
+---@param target_width integer|nil override floor width (used by equalize)
 ---@return string[]
-function M.create_box(lines, centered, style)
+function M.create_box(lines, centered, style, target_width)
 	if not lines or #lines == 0 then
 		return {}
 	end
@@ -444,9 +446,10 @@ function M.create_box(lines, centered, style)
 	local content_w = max_w + (inner * 2)
 	local visual_w = content_w + 2
 
-	-- Enforce minimum width from buffer-tracked max
-	if state.max_visual_width and visual_w < state.max_visual_width then
-		visual_w = state.max_visual_width
+	-- Enforce minimum width (target_width from redraw, or config floor)
+	local floor = target_width or M.config.min_width
+	if visual_w < floor then
+		visual_w = floor
 		content_w = visual_w - 2
 	end
 
@@ -479,12 +482,13 @@ function M.create_box(lines, centered, style)
 end
 
 --- Create centered title lines: ────── Title ──────
---- Enforces a minimum width from the buffer's max_visual_width for consistency with boxes.
+--- Enforces a minimum visual width from config.min_width (or target_width if given).
 --- Does NOT apply indentation; the caller is responsible for that.
 ---@param lines string[]|string
 ---@param style string|nil border style: "thin" (default) or "heavy"
+---@param target_width integer|nil override floor width (used by equalize)
 ---@return string[]
-function M.create_centered_line(lines, style)
+function M.create_centered_line(lines, style, target_width)
 	if type(lines) == "string" then
 		lines = { lines }
 	end
@@ -508,12 +512,8 @@ function M.create_centered_line(lines, style)
 		end
 	end
 
-	local width = math.max(max_tw + (inner_pad * 2) + 6, M.config.default_width)
-
-	-- Enforce minimum width from buffer-tracked max (unified with boxes)
-	if state.max_visual_width and width < state.max_visual_width then
-		width = state.max_visual_width
-	end
+	local floor = target_width or M.config.min_width
+	local width = math.max(max_tw + (inner_pad * 2) + 6, floor)
 
 	state.last_visual_width = width
 	update_max_width(state, width)
@@ -654,7 +654,7 @@ function M.strip_decoration(lines, prefix, suffix)
 end
 
 --  ──────────────────────────────────────────────────────────────────
---                      Redraw infrastructure
+--                      Equalize infrastructure
 --  ──────────────────────────────────────────────────────────────────
 
 ---@class DecoBlock
@@ -834,15 +834,15 @@ local function line_visual_width_for(texts)
 			max_tw = tw
 		end
 	end
-	return math.max(max_tw + (inner_pad * 2) + 6, M.config.default_width)
+	return math.max(max_tw + (inner_pad * 2) + 6, M.config.min_width)
 end
 
 --- Redraw all decorated elements in the given buffer range.
 --- Scans the full file to determine the maximum visual width, then re-renders
 --- every block in the target range at that width. All replacements are grouped
 --- into a single undo entry.
----@param target_line1 integer 1-indexed start of range to redraw
----@param target_line2 integer 1-indexed end of range to redraw (inclusive)
+---@param target_line1 integer 1-indexed start of range to equalize
+---@param target_line2 integer 1-indexed end of range to equalize (inclusive)
 function M.redraw_range(target_line1, target_line2)
 	local state = get_buf_state()
 	local prefix, suffix = get_comment_parts()
@@ -864,6 +864,9 @@ function M.redraw_range(target_line1, target_line2)
 			global_max = w
 		end
 	end
+
+	-- Never go below the configured minimum
+	global_max = math.max(global_max, M.config.min_width)
 
 	if global_max > 0 then
 		state.max_visual_width = global_max
@@ -897,16 +900,16 @@ function M.redraw_range(target_line1, target_line2)
 
 		local new_lines
 		if blk.kind == "box_thin" then
-			new_lines = M.create_box(blk.texts, true, "thin")
+			new_lines = M.create_box(blk.texts, true, "thin", global_max)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "box_fat" then
-			new_lines = M.create_box(blk.texts, true, "heavy")
+			new_lines = M.create_box(blk.texts, true, "heavy", global_max)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "line_thin" then
-			new_lines = M.create_centered_line(blk.texts, "thin")
+			new_lines = M.create_centered_line(blk.texts, "thin", global_max)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "line_fat" then
-			new_lines = M.create_centered_line(blk.texts, "heavy")
+			new_lines = M.create_centered_line(blk.texts, "heavy", global_max)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "sep_thin" then
 			new_lines = M.create_separator("thin")
@@ -1091,7 +1094,7 @@ function M.setup(opts)
 
 	-- ── Strip command ─────────────────────────────────────────────
 
-	vim.api.nvim_create_user_command("CommentStrip", function(args)
+	vim.api.nvim_create_user_command("CommentRemove", function(args)
 		local prefix, suffix = get_comment_parts()
 		local line1, line2 = args.line1, args.line2
 
@@ -1116,7 +1119,7 @@ function M.setup(opts)
 
 	-- ── Redraw command ────────────────────────────────────────────
 
-	vim.api.nvim_create_user_command("CommentRedraw", function(args)
+	vim.api.nvim_create_user_command("CommentEqualize", function(args)
 		local line1, line2 = args.line1, args.line2
 
 		if args.range == 0 then
