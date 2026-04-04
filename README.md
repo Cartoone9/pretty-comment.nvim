@@ -142,9 +142,9 @@ vim.pack.add({
 })
 
 require("pretty-comment").setup()
---    ╭──────────────────────────────────────────╮
---    │            Recommend keybinds            │
---    ╰──────────────────────────────────────────╯
+--    ╭────────────────────────────────────────────╮
+--    │            Recommended keybinds            │
+--    ╰────────────────────────────────────────────╯
 vim.keymap.set("v", "gcb", ":CommentBox<CR>", { silent = true, desc = "Comment box" })
 vim.keymap.set("n", "gcb", "<cmd>CommentBox<CR>", { silent = true, desc = "Comment box (line)" })
 vim.keymap.set("v", "gcB", ":CommentBoxFat<CR>", { silent = true, desc = "Fat comment box" })
@@ -178,9 +178,9 @@ end, { expr = true, desc = "Comment toggle (instant, avoids gc delay)" })
 ```lua
 return {
 	"Cartoone9/pretty-comment.nvim",
-	--    ╭──────────────────────────────────────────╮
-	--    │            Recommend keybinds            │
-	--    ╰──────────────────────────────────────────╯
+	--    ╭────────────────────────────────────────────╮
+	--    │            Recommended keybinds            │
+	--    ╰────────────────────────────────────────────╯
 	keys = {
 		{ "gcb", ":CommentBox<CR>", mode = "v", desc = "Comment box", silent = true },
 		{ "gcb", "<cmd>CommentBox<CR>", mode = "n", desc = "Comment box (line)", silent = true },
@@ -220,7 +220,7 @@ return {
 
 ## Configuration
 
-These are the defaults. Pass any overrides to `setup()` or through `opts` in lazy.nvim:
+These are the defaults. Pass any overrides to `setup()` in vim.pack:
 
 ```lua
 require("pretty-comment").setup({
