@@ -159,7 +159,7 @@ vim.keymap.set("v", "gcr", ":CommentRemove<CR>", { silent = true, desc = "Strip 
 vim.keymap.set("n", "gcr", "<cmd>CommentRemove<CR>", { silent = true, desc = "Strip comment decoration (line)" })
 vim.keymap.set("v", "gce", ":CommentEqualize<CR>", { silent = true, desc = "Equalize comment decoration (selection)" })
 vim.keymap.set("n", "gce", "<cmd>CommentEqualize<CR>", { silent = true, desc = "Equalize all comment decoration" })
-vim.keymap.set("n", "gcX", "<cmd>CommentReset<CR>", { silent = true, desc = "Reset comment width tracking" })
+vim.keymap.set("n", "gcx", "<cmd>CommentReset<CR>", { silent = true, desc = "Reset comment width tracking" })
 --  ───────────────────────────────────────────────────────────────────────────────────────────────────
 --    ╭─────────────────────────────────────────────────────────────────────────────────────────────╮
 --    │          gc* keybinds above add a delay to visual 'gc' comment toggle. Use 'gcc'            │
@@ -196,7 +196,7 @@ return {
 		{ "gcr", "<cmd>CommentRemove<CR>", mode = "n", desc = "Strip comment decoration (line)", silent = true },
 		{ "gce", ":CommentEqualize<CR>", mode = "v", desc = "Equalize comment decoration (selection)", silent = true },
 		{ "gce", "<cmd>CommentEqualize<CR>", mode = "n", desc = "Equalize all comment decoration", silent = true },
-		{ "gcX", "<cmd>CommentReset<CR>", mode = "n", desc = "Reset comment width tracking", silent = true },
+		{ "gcx", "<cmd>CommentReset<CR>", mode = "n", desc = "Reset comment width tracking", silent = true },
 	},
 	--  ───────────────────────────────────────────────────────────────────────────────────────────────────
 	--    ╭─────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -262,7 +262,7 @@ opts = {
 | `:CommentDivFat` | `gcD` | Heavy divider below cursor (largest width) |
 | `:CommentRemove` | `gcr` | Strip any decoration back to plain comments |
 | `:CommentEqualize` | `gce` | Equalize decorations to uniform width (file or selection) |
-| `:CommentReset` | `gcX` | Reset tracked width for this buffer |
+| `:CommentReset` | `gcx` | Reset tracked width for this buffer |
 
 Box, line, strip, and redraw commands work in both normal mode (auto-expands to the full comment block) and visual mode. Equalize in normal mode targets the entire file; in visual mode it targets only the selected elements (auto-expanding to complete blocks).
 

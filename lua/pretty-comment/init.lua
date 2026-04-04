@@ -644,6 +644,10 @@ function M.strip_decoration(lines, prefix, suffix)
 					end
 				end
 			end
+			-- Line starts with dashes but doesn't match the centered title
+			-- pattern (e.g. manually edited or corrupted). Preserve as-is
+			-- rather than silently dropping it.
+			table.insert(result, line)
 		else
 			table.insert(result, line)
 		end
@@ -946,151 +950,91 @@ function M.setup(opts)
 		end,
 	})
 
+	-- ── Command factories ─────────────────────────────────────────
+
+	--- Build a range-aware command handler (boxes and centered titles).
+	--- In normal mode auto-expands to the full contiguous comment block.
+	---@param render_fn fun(lines: string[]): string[]
+	---@return fun(args: table)
+	local function make_range_command(render_fn)
+		return function(args)
+			local prefix = get_comment_parts()
+			local line1, line2 = args.line1, args.line2
+
+			if args.range == 0 then
+				local line = vim.api.nvim_buf_get_lines(0, line1 - 1, line1, false)[1]
+				if is_commented(line, prefix) then
+					line1, line2 = find_comment_block(line1, prefix)
+				end
+			end
+
+			local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
+			local indent = get_common_indent(raw_lines)
+			get_buf_state().last_indent = indent
+
+			local stripped = strip_comments_from_lines(raw_lines, prefix)
+			local result = render_fn(stripped)
+			result = indent_lines(result, indent)
+			if M.config.trailing_blank then
+				table.insert(result, "")
+			end
+			vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
+			local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
+			vim.api.nvim_win_set_cursor(0, { target, 0 })
+		end
+	end
+
+	--- Build a command handler that inserts a line below the cursor (separators and dividers).
+	---@param render_fn fun(): string[]
+	---@return fun()
+	local function make_insert_command(render_fn)
+		return function()
+			local state = get_buf_state()
+			local row = vim.api.nvim_win_get_cursor(0)[1]
+			local result = render_fn()
+			result = indent_lines(result, state.last_indent)
+			vim.api.nvim_buf_set_lines(0, row, row, false, result)
+			vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
+		end
+	end
+
 	-- ── Box commands ──────────────────────────────────────────────
 
-	vim.api.nvim_create_user_command("CommentBox", function(args)
-		local prefix = get_comment_parts()
-		local line1, line2 = args.line1, args.line2
+	vim.api.nvim_create_user_command("CommentBox", make_range_command(function(lines)
+		return M.create_box(lines, true, "thin")
+	end), { range = true, desc = "Wrap selection in a comment box" })
 
-		if args.range == 0 then
-			local line = vim.api.nvim_buf_get_lines(0, line1 - 1, line1, false)[1]
-			if is_commented(line, prefix) then
-				line1, line2 = find_comment_block(line1, prefix)
-			end
-		end
-
-		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
-		local indent = get_common_indent(raw_lines)
-		get_buf_state().last_indent = indent
-
-		local stripped = strip_comments_from_lines(raw_lines, prefix)
-		local result = M.create_box(stripped, true)
-		result = indent_lines(result, indent)
-		if M.config.trailing_blank then
-			table.insert(result, "")
-		end
-		vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
-		local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
-		vim.api.nvim_win_set_cursor(0, { target, 0 })
-	end, { range = true, desc = "Wrap selection in a comment box" })
-
-	vim.api.nvim_create_user_command("CommentBoxFat", function(args)
-		local prefix = get_comment_parts()
-		local line1, line2 = args.line1, args.line2
-
-		if args.range == 0 then
-			local line = vim.api.nvim_buf_get_lines(0, line1 - 1, line1, false)[1]
-			if is_commented(line, prefix) then
-				line1, line2 = find_comment_block(line1, prefix)
-			end
-		end
-
-		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
-		local indent = get_common_indent(raw_lines)
-		get_buf_state().last_indent = indent
-
-		local stripped = strip_comments_from_lines(raw_lines, prefix)
-		local result = M.create_box(stripped, true, "heavy")
-		result = indent_lines(result, indent)
-		if M.config.trailing_blank then
-			table.insert(result, "")
-		end
-		vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
-		local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
-		vim.api.nvim_win_set_cursor(0, { target, 0 })
-	end, { range = true, desc = "Wrap selection in a fat comment box" })
+	vim.api.nvim_create_user_command("CommentBoxFat", make_range_command(function(lines)
+		return M.create_box(lines, true, "heavy")
+	end), { range = true, desc = "Wrap selection in a fat comment box" })
 
 	-- ── Centered title commands ───────────────────────────────────
 
-	vim.api.nvim_create_user_command("CommentLine", function(args)
-		local prefix = get_comment_parts()
-		local line1, line2 = args.line1, args.line2
+	vim.api.nvim_create_user_command("CommentLine", make_range_command(function(lines)
+		return M.create_centered_line(lines, "thin")
+	end), { range = true, desc = "Create centered comment title lines" })
 
-		if args.range == 0 then
-			local line = vim.api.nvim_buf_get_lines(0, line1 - 1, line1, false)[1]
-			if is_commented(line, prefix) then
-				line1, line2 = find_comment_block(line1, prefix)
-			end
-		end
-
-		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
-		local indent = get_common_indent(raw_lines)
-		get_buf_state().last_indent = indent
-
-		local stripped = strip_comments_from_lines(raw_lines, prefix)
-		local result = M.create_centered_line(stripped)
-		result = indent_lines(result, indent)
-		if M.config.trailing_blank then
-			table.insert(result, "")
-		end
-		vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
-		local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
-		vim.api.nvim_win_set_cursor(0, { target, 0 })
-	end, { range = true, desc = "Create centered comment title lines" })
-
-	vim.api.nvim_create_user_command("CommentLineFat", function(args)
-		local prefix = get_comment_parts()
-		local line1, line2 = args.line1, args.line2
-
-		if args.range == 0 then
-			local line = vim.api.nvim_buf_get_lines(0, line1 - 1, line1, false)[1]
-			if is_commented(line, prefix) then
-				line1, line2 = find_comment_block(line1, prefix)
-			end
-		end
-
-		local raw_lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
-		local indent = get_common_indent(raw_lines)
-		get_buf_state().last_indent = indent
-
-		local stripped = strip_comments_from_lines(raw_lines, prefix)
-		local result = M.create_centered_line(stripped, "heavy")
-		result = indent_lines(result, indent)
-		if M.config.trailing_blank then
-			table.insert(result, "")
-		end
-		vim.api.nvim_buf_set_lines(0, line1 - 1, line2, false, result)
-		local target = math.min(line1 + #result - 1, vim.api.nvim_buf_line_count(0))
-		vim.api.nvim_win_set_cursor(0, { target, 0 })
-	end, { range = true, desc = "Create fat centered comment title lines" })
+	vim.api.nvim_create_user_command("CommentLineFat", make_range_command(function(lines)
+		return M.create_centered_line(lines, "heavy")
+	end), { range = true, desc = "Create fat centered comment title lines" })
 
 	-- ── Separator / divider commands (insert below cursor) ────────
 
-	vim.api.nvim_create_user_command("CommentSep", function()
-		local state = get_buf_state()
-		local row = vim.api.nvim_win_get_cursor(0)[1]
-		local result = M.create_separator()
-		result = indent_lines(result, state.last_indent)
-		vim.api.nvim_buf_set_lines(0, row, row, false, result)
-		vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
-	end, { desc = "Insert a comment separator below the current line" })
+	vim.api.nvim_create_user_command("CommentSep", make_insert_command(function()
+		return M.create_separator("thin")
+	end), { desc = "Insert a comment separator below the current line" })
 
-	vim.api.nvim_create_user_command("CommentSepFat", function()
-		local state = get_buf_state()
-		local row = vim.api.nvim_win_get_cursor(0)[1]
-		local result = M.create_separator("heavy")
-		result = indent_lines(result, state.last_indent)
-		vim.api.nvim_buf_set_lines(0, row, row, false, result)
-		vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
-	end, { desc = "Insert a fat comment separator below the current line" })
+	vim.api.nvim_create_user_command("CommentSepFat", make_insert_command(function()
+		return M.create_separator("heavy")
+	end), { desc = "Insert a fat comment separator below the current line" })
 
-	vim.api.nvim_create_user_command("CommentDiv", function()
-		local state = get_buf_state()
-		local row = vim.api.nvim_win_get_cursor(0)[1]
-		local result = M.create_divider()
-		result = indent_lines(result, state.last_indent)
-		vim.api.nvim_buf_set_lines(0, row, row, false, result)
-		vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
-	end, { desc = "Insert a comment divider below the current line (largest seen width)" })
+	vim.api.nvim_create_user_command("CommentDiv", make_insert_command(function()
+		return M.create_divider("thin")
+	end), { desc = "Insert a comment divider below the current line (largest seen width)" })
 
-	vim.api.nvim_create_user_command("CommentDivFat", function()
-		local state = get_buf_state()
-		local row = vim.api.nvim_win_get_cursor(0)[1]
-		local result = M.create_divider("heavy")
-		result = indent_lines(result, state.last_indent)
-		vim.api.nvim_buf_set_lines(0, row, row, false, result)
-		vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
-	end, { desc = "Insert a fat comment divider below the current line (largest seen width)" })
+	vim.api.nvim_create_user_command("CommentDivFat", make_insert_command(function()
+		return M.create_divider("heavy")
+	end), { desc = "Insert a fat comment divider below the current line (largest seen width)" })
 
 	-- ── Strip command ─────────────────────────────────────────────
 
