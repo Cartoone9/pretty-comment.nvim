@@ -841,43 +841,28 @@ local function line_visual_width_for(texts)
 	return math.max(max_tw + (inner_pad * 2) + 6, M.config.min_width)
 end
 
---- Redraw all decorated elements in the given buffer range.
---- Scans the full file to determine the maximum visual width, then re-renders
---- every block in the target range at that width. All replacements are grouped
---- into a single undo entry.
+--- Redraw decorated elements to a uniform width.
+--- When selection_only is false (normal mode), scans the full file to find the
+--- widest content-bearing element (box or centered title) and re-renders every
+--- decoration in the buffer at that width.
+--- When selection_only is true (visual mode), the target width is derived from
+--- only the blocks that overlap the given range, and only those blocks are
+--- re-rendered. Separators/dividers in the selection adapt to that local max.
+--- All replacements are grouped into a single undo entry.
 ---@param target_line1 integer 1-indexed start of range to equalize
 ---@param target_line2 integer 1-indexed end of range to equalize (inclusive)
-function M.redraw_range(target_line1, target_line2)
+---@param selection_only boolean when true, derive width from selected blocks only
+function M.redraw_range(target_line1, target_line2, selection_only)
 	local state = get_buf_state()
 	local prefix, suffix = get_comment_parts()
 	local total = vim.api.nvim_buf_line_count(0)
 
-	-- Phase 1: scan the ENTIRE file to compute the global max visual width.
+	-- Scan the entire file so we can expand partial selections and
+	-- (in full-file mode) compute the global max width.
 	local all_lines = vim.api.nvim_buf_get_lines(0, 0, total, false)
 	local all_blocks = find_decorated_blocks(all_lines, 1, prefix, suffix)
 
-	local global_max = state.max_visual_width or 0
-	for _, blk in ipairs(all_blocks) do
-		local w = 0
-		if blk.kind == "box_thin" or blk.kind == "box_fat" then
-			w = box_visual_width_for(blk.texts)
-		elseif blk.kind == "line_thin" or blk.kind == "line_fat" then
-			w = line_visual_width_for(blk.texts)
-		end
-		if w > global_max then
-			global_max = w
-		end
-	end
-
-	-- Never go below the configured minimum
-	global_max = math.max(global_max, M.config.min_width)
-
-	if global_max > 0 then
-		state.max_visual_width = global_max
-		state.last_visual_width = global_max
-	end
-
-	-- Phase 2: expand target range to fully include any partially-selected blocks.
+	-- Expand the target range to fully include any partially-selected blocks.
 	for _, blk in ipairs(all_blocks) do
 		if blk.end_row >= target_line1 and blk.start_row <= target_line2 then
 			if blk.start_row < target_line1 then
@@ -889,6 +874,7 @@ function M.redraw_range(target_line1, target_line2)
 		end
 	end
 
+	-- Collect the blocks that fall inside the (possibly expanded) target range.
 	local target_blocks = {}
 	for _, blk in ipairs(all_blocks) do
 		if blk.end_row >= target_line1 and blk.start_row <= target_line2 then
@@ -896,24 +882,58 @@ function M.redraw_range(target_line1, target_line2)
 		end
 	end
 
-	-- Phase 3: re-render from bottom to top to keep line numbers stable.
+	-- Derive the target width from the appropriate scope.
+	local source_blocks = selection_only and target_blocks or all_blocks
+	local target_max = selection_only and 0 or (state.max_visual_width or 0)
+	for _, blk in ipairs(source_blocks) do
+		local w = 0
+		if blk.kind == "box_thin" or blk.kind == "box_fat" then
+			w = box_visual_width_for(blk.texts)
+		elseif blk.kind == "line_thin" or blk.kind == "line_fat" then
+			w = line_visual_width_for(blk.texts)
+		end
+		if w > target_max then
+			target_max = w
+		end
+	end
+
+	-- Never go below the configured minimum.
+	target_max = math.max(target_max, M.config.min_width)
+
+	-- Only update buffer-wide tracking state for full-file equalize.
+	if not selection_only and target_max > 0 then
+		state.max_visual_width = target_max
+		state.last_visual_width = target_max
+	end
+
+	-- Re-render from bottom to top to keep line numbers stable.
 	-- All replacements are joined into a single undo entry.
 	local first_write = true
 	for i = #target_blocks, 1, -1 do
 		local blk = target_blocks[i]
 
+		-- For separators/dividers, temporarily override state so
+		-- create_separator/create_divider use the correct target width.
+		local saved_last, saved_max
+		if blk.kind == "sep_thin" or blk.kind == "sep_fat" then
+			saved_last = state.last_visual_width
+			saved_max = state.max_visual_width
+			state.last_visual_width = target_max
+			state.max_visual_width = target_max
+		end
+
 		local new_lines
 		if blk.kind == "box_thin" then
-			new_lines = M.create_box(blk.texts, true, "thin", global_max)
+			new_lines = M.create_box(blk.texts, true, "thin", target_max)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "box_fat" then
-			new_lines = M.create_box(blk.texts, true, "heavy", global_max)
+			new_lines = M.create_box(blk.texts, true, "heavy", target_max)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "line_thin" then
-			new_lines = M.create_centered_line(blk.texts, "thin", global_max)
+			new_lines = M.create_centered_line(blk.texts, "thin", target_max)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "line_fat" then
-			new_lines = M.create_centered_line(blk.texts, "heavy", global_max)
+			new_lines = M.create_centered_line(blk.texts, "heavy", target_max)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "sep_thin" then
 			new_lines = M.create_separator("thin")
@@ -921,6 +941,12 @@ function M.redraw_range(target_line1, target_line2)
 		elseif blk.kind == "sep_fat" then
 			new_lines = M.create_separator("heavy")
 			new_lines = indent_lines(new_lines, blk.indent)
+		end
+
+		-- Restore state after separator/divider rendering.
+		if saved_last ~= nil then
+			state.last_visual_width = saved_last
+			state.max_visual_width = saved_max
 		end
 
 		if new_lines and #new_lines > 0 then
@@ -1000,41 +1026,73 @@ function M.setup(opts)
 
 	-- ── Box commands ──────────────────────────────────────────────
 
-	vim.api.nvim_create_user_command("CommentBox", make_range_command(function(lines)
-		return M.create_box(lines, true, "thin")
-	end), { range = true, desc = "Wrap selection in a comment box" })
+	vim.api.nvim_create_user_command(
+		"CommentBox",
+		make_range_command(function(lines)
+			return M.create_box(lines, true, "thin")
+		end),
+		{ range = true, desc = "Wrap selection in a comment box" }
+	)
 
-	vim.api.nvim_create_user_command("CommentBoxFat", make_range_command(function(lines)
-		return M.create_box(lines, true, "heavy")
-	end), { range = true, desc = "Wrap selection in a fat comment box" })
+	vim.api.nvim_create_user_command(
+		"CommentBoxFat",
+		make_range_command(function(lines)
+			return M.create_box(lines, true, "heavy")
+		end),
+		{ range = true, desc = "Wrap selection in a fat comment box" }
+	)
 
 	-- ── Centered title commands ───────────────────────────────────
 
-	vim.api.nvim_create_user_command("CommentLine", make_range_command(function(lines)
-		return M.create_centered_line(lines, "thin")
-	end), { range = true, desc = "Create centered comment title lines" })
+	vim.api.nvim_create_user_command(
+		"CommentLine",
+		make_range_command(function(lines)
+			return M.create_centered_line(lines, "thin")
+		end),
+		{ range = true, desc = "Create centered comment title lines" }
+	)
 
-	vim.api.nvim_create_user_command("CommentLineFat", make_range_command(function(lines)
-		return M.create_centered_line(lines, "heavy")
-	end), { range = true, desc = "Create fat centered comment title lines" })
+	vim.api.nvim_create_user_command(
+		"CommentLineFat",
+		make_range_command(function(lines)
+			return M.create_centered_line(lines, "heavy")
+		end),
+		{ range = true, desc = "Create fat centered comment title lines" }
+	)
 
 	-- ── Separator / divider commands (insert below cursor) ────────
 
-	vim.api.nvim_create_user_command("CommentSep", make_insert_command(function()
-		return M.create_separator("thin")
-	end), { desc = "Insert a comment separator below the current line" })
+	vim.api.nvim_create_user_command(
+		"CommentSep",
+		make_insert_command(function()
+			return M.create_separator("thin")
+		end),
+		{ desc = "Insert a comment separator below the current line" }
+	)
 
-	vim.api.nvim_create_user_command("CommentSepFat", make_insert_command(function()
-		return M.create_separator("heavy")
-	end), { desc = "Insert a fat comment separator below the current line" })
+	vim.api.nvim_create_user_command(
+		"CommentSepFat",
+		make_insert_command(function()
+			return M.create_separator("heavy")
+		end),
+		{ desc = "Insert a fat comment separator below the current line" }
+	)
 
-	vim.api.nvim_create_user_command("CommentDiv", make_insert_command(function()
-		return M.create_divider("thin")
-	end), { desc = "Insert a comment divider below the current line (largest seen width)" })
+	vim.api.nvim_create_user_command(
+		"CommentDiv",
+		make_insert_command(function()
+			return M.create_divider("thin")
+		end),
+		{ desc = "Insert a comment divider below the current line (largest seen width)" }
+	)
 
-	vim.api.nvim_create_user_command("CommentDivFat", make_insert_command(function()
-		return M.create_divider("heavy")
-	end), { desc = "Insert a fat comment divider below the current line (largest seen width)" })
+	vim.api.nvim_create_user_command(
+		"CommentDivFat",
+		make_insert_command(function()
+			return M.create_divider("heavy")
+		end),
+		{ desc = "Insert a fat comment divider below the current line (largest seen width)" }
+	)
 
 	-- ── Strip command ─────────────────────────────────────────────
 
@@ -1067,13 +1125,14 @@ function M.setup(opts)
 		local line1, line2 = args.line1, args.line2
 
 		if args.range == 0 then
+			-- Normal mode: equalize entire buffer, width from all blocks.
 			local total = vim.api.nvim_buf_line_count(0)
-			M.redraw_range(1, total)
+			M.redraw_range(1, total, false)
 		else
-			-- Visual mode: auto-expands to complete blocks inside redraw_range
-			M.redraw_range(line1, line2)
+			-- Visual mode: equalize selection, width from selected blocks only.
+			M.redraw_range(line1, line2, true)
 		end
-	end, { range = true, desc = "Redraw all comment decorations to a uniform width" })
+	end, { range = true, desc = "Redraw comment decorations to a uniform width" })
 
 	-- ── Reset command ─────────────────────────────────────────────
 

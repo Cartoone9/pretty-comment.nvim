@@ -82,11 +82,13 @@ Eight style commands (thin and fat), plus remove, equalize, and reset utilities.
 
 ### Equalize
 
-**`:CommentEqualize`** re-renders all decorated elements (boxes, centered titles, separators, dividers) to a uniform width.
+**`:CommentEqualize`** re-renders decorated elements (boxes, centered titles, separators, dividers) to a uniform width.
 
-In **normal mode** it redraws the entire file. In **visual mode** it redraws only the selected elements, auto-expanding to include any partially-selected blocks. All changes from a single equalize are grouped into one undo step.
+In **normal mode** it redraws the entire file. The target width is the widest content-bearing element (box or centered title) found anywhere in the buffer. Separators and dividers are resized to match.
 
-The target width is determined by scanning the entire file for the widest content across all elements, so everything ends up consistent regardless of which range you equalize.
+In **visual mode** it redraws only the selected elements, auto-expanding to include any partially-selected blocks. The target width comes from the widest element **inside the selection**, not the whole file, so you can equalize a local group of decorations independently from the rest of the buffer.
+
+All changes from a single equalize are grouped into one undo step.
 
 ```python
 # Before (inconsistent widths):
@@ -120,7 +122,7 @@ The target width is determined by scanning the entire file for the widest conten
 
 Boxes and centered titles have a configurable minimum width (`min_width`, defaults to 30) so that short text doesn't produce tiny decorations. Beyond that floor, each element sizes itself to fit its content. Elements created at different times may end up with different widths.
 
-To unify widths across a file, use `:CommentEqualize` (`gce`). It scans the entire file, finds the widest element, and re-renders everything at that width. In visual mode it targets only the selected elements (auto-expanding to complete blocks).
+To unify widths, use `:CommentEqualize` (`gce`). In normal mode it finds the widest element in the whole buffer and re-renders everything at that width. In visual mode it uses the widest element in the selection, so you can normalize a section without pulling in a wider box elsewhere in the file.
 
 Separators use the width of the last box or title you created. Dividers use the largest width seen in the buffer so far. Both track state per-buffer, so switching files won't carry widths across.
 
