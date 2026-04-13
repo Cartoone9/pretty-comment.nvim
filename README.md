@@ -8,6 +8,8 @@ A small Neovim plugin that wraps comments into Unicode boxes, centered titles, a
 
 Eight style commands (thin and fat), plus remove, equalize, and reset utilities. All are comment-prefix-aware.
 
+https://github.com/user-attachments/assets/99b99205-2693-4d5e-9d38-37edcb0d952e
+
 ### Boxes
 
 **`:CommentBox`** wraps lines into a Unicode box with thin borders. In normal mode it auto-expands to the full contiguous comment block. Works with visual selections too.
