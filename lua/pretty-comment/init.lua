@@ -407,8 +407,9 @@ local borders = {
 ---@param centered boolean|nil center text inside the box (default true)
 ---@param style string|nil border style: "thin" (default) or "heavy"
 ---@param target_width integer|nil override floor width (used by equalize)
+---@param preserve_blank boolean|nil keep empty input lines as blank box rows
 ---@return string[]
-function M.create_box(lines, centered, style, target_width)
+function M.create_box(lines, centered, style, target_width, preserve_blank)
 	if not lines or #lines == 0 then
 		return {}
 	end
@@ -423,12 +424,17 @@ function M.create_box(lines, centered, style, target_width)
 	local inner = M.config.inner_box_padding
 	local suffix_part = suffix ~= "" and (pad .. suffix) or ""
 
-	-- Filter out empty lines and trim whitespace
+	-- Filter out empty lines and trim whitespace.
+	-- When preserve_blank is set (redraw/equalize path), empty input lines
+	-- represent intentional blank rows inside an existing box and must be
+	-- kept as "" so they render as a blank content line.
 	local filtered = {}
 	for _, l in ipairs(lines) do
 		local trimmed = vim.trim(l)
 		if trimmed ~= "" then
 			table.insert(filtered, trimmed)
+		elseif preserve_blank then
+			table.insert(filtered, "")
 		end
 	end
 	if #filtered == 0 then
@@ -673,10 +679,10 @@ local function find_decorated_blocks(buf_lines, line1, prefix, suffix)
 			while j <= #buf_lines do
 				local dt = classify_decorated_line(buf_lines[j], prefix, suffix)
 				if dt == DTYPE.BOX_MID_THIN then
+					-- Preserve empty box content lines as "" so they
+					-- survive an equalize/redraw pass.
 					local t = extract_box_content_text(buf_lines[j], prefix, suffix)
-					if t ~= "" then
-						table.insert(texts, t)
-					end
+					table.insert(texts, t)
 				elseif dt == DTYPE.BOX_BOT_THIN then
 					table.insert(blocks, {
 						start_row = row,
@@ -700,10 +706,10 @@ local function find_decorated_blocks(buf_lines, line1, prefix, suffix)
 			while j <= #buf_lines do
 				local dt = classify_decorated_line(buf_lines[j], prefix, suffix)
 				if dt == DTYPE.BOX_MID_FAT then
+					-- Preserve empty box content lines as "" so they
+					-- survive an equalize/redraw pass.
 					local t = extract_box_content_text(buf_lines[j], prefix, suffix)
-					if t ~= "" then
-						table.insert(texts, t)
-					end
+					table.insert(texts, t)
 				elseif dt == DTYPE.BOX_BOT_FAT then
 					table.insert(blocks, {
 						start_row = row,
@@ -962,10 +968,10 @@ function M.redraw_range(target_line1, target_line2, selection_only)
 
 		local new_lines
 		if blk.kind == "box_thin" then
-			new_lines = M.create_box(blk.texts, true, "thin", target_max)
+			new_lines = M.create_box(blk.texts, true, "thin", target_max, true)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "box_fat" then
-			new_lines = M.create_box(blk.texts, true, "heavy", target_max)
+			new_lines = M.create_box(blk.texts, true, "heavy", target_max, true)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "line_thin" then
 			new_lines = M.create_centered_line(blk.texts, "thin", target_max)
