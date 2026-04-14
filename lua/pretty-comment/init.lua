@@ -407,9 +407,8 @@ local borders = {
 ---@param centered boolean|nil center text inside the box (default true)
 ---@param style string|nil border style: "thin" (default) or "heavy"
 ---@param target_width integer|nil override floor width (used by equalize)
----@param preserve_blank boolean|nil keep empty input lines as blank box rows
 ---@return string[]
-function M.create_box(lines, centered, style, target_width, preserve_blank)
+function M.create_box(lines, centered, style, target_width)
 	if not lines or #lines == 0 then
 		return {}
 	end
@@ -424,21 +423,26 @@ function M.create_box(lines, centered, style, target_width, preserve_blank)
 	local inner = M.config.inner_box_padding
 	local suffix_part = suffix ~= "" and (pad .. suffix) or ""
 
-	-- Filter out empty lines and trim whitespace.
-	-- When preserve_blank is set (redraw/equalize path), empty input lines
-	-- represent intentional blank rows inside an existing box and must be
-	-- kept as "" so they render as a blank content line.
-	local filtered = {}
-	for _, l in ipairs(lines) do
-		local trimmed = vim.trim(l)
-		if trimmed ~= "" then
-			table.insert(filtered, trimmed)
-		elseif preserve_blank then
-			table.insert(filtered, "")
+	-- Trim leading and trailing blank lines, but preserve interior ones as "".
+	-- Interior blanks are intentional separators in the user's selection (or
+	-- existing blank rows inside a box being equalized) and must render as a
+	-- blank content row inside the box.
+	local first, last = nil, nil
+	for i, l in ipairs(lines) do
+		if vim.trim(l) ~= "" then
+			if first == nil then
+				first = i
+			end
+			last = i
 		end
 	end
-	if #filtered == 0 then
+	if first == nil then
 		return {}
+	end
+
+	local filtered = {}
+	for i = first, last do
+		table.insert(filtered, vim.trim(lines[i]))
 	end
 
 	local max_w = 0
@@ -968,10 +972,10 @@ function M.redraw_range(target_line1, target_line2, selection_only)
 
 		local new_lines
 		if blk.kind == "box_thin" then
-			new_lines = M.create_box(blk.texts, true, "thin", target_max, true)
+			new_lines = M.create_box(blk.texts, true, "thin", target_max)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "box_fat" then
-			new_lines = M.create_box(blk.texts, true, "heavy", target_max, true)
+			new_lines = M.create_box(blk.texts, true, "heavy", target_max)
 			new_lines = indent_lines(new_lines, blk.indent)
 		elseif blk.kind == "line_thin" then
 			new_lines = M.create_centered_line(blk.texts, "thin", target_max)
