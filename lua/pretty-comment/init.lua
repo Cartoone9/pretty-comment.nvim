@@ -624,6 +624,10 @@ function M.strip_decoration(lines, prefix, suffix)
 			local inner = vim.trim(inner_bytes)
 			if inner ~= "" then
 				table.insert(result, indent .. prefix .. " " .. inner)
+			else
+				-- Blank box content row: emit a bare comment line so the
+				-- intentional gap survives the strip.
+				table.insert(result, indent .. prefix)
 			end
 		elseif first == "─" or first == "━" then
 			local dash = first
