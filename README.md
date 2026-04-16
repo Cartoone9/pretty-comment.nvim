@@ -1,13 +1,39 @@
-# pretty-comment.nvim
+<h1 align="center">🪄 Pretty Comment</h1>
+<p align="center">
+  <b>Creating a beautiful comments by keybinds! </a></b>
+</p>
 
-A small Neovim plugin that wraps comments into Unicode boxes, centered titles, and separator lines. It reads `commentstring` (or falls back to a filetype table) so it works across languages.
+<!-- toc -->
+  - [Introduction](#introduction)
+  - [Video example](#video-example)
+  - [Boxes](#boxes)
+    - [Centered titles](#centered-titles)
+    - [Separators and dividers](#separators-and-dividers)
+    - [Strip](#strip)
+    -  [Equalize](#equalize)
+    -  [Reset](#reset)
+    - [Width behavior](#width-behavior)
+  - [Installation](#installation)
+    - [vim.pack (Neovim 0.12+)](#vimpack-neovim-012)
+    - [lazy.nvim](#lazynvim)
+  - [Configuration](#configuration)
+  - [Command reference](#command-reference)
+  - [Supported languages](#supported-languages)
+  - [Credits](#credits)
+  - [License](#license)
+<!-- tocstop -->
 
-> **Heads up:** This is a personal project that was largely vibecoded. I use it daily and I'm happy to share it, but I make no promises about long-term maintenance. If it's useful to you, fork it and make it your own.
-
-## What it does
-
+## Introduction
+**A small Neovim plugin that wraps comments into Unicode boxes, centered titles, and separator lines.**
+Plugin reads `commentstring` (or falls back to a file-type table) so it works across languages.
 Eight style commands (thin and fat), plus remove, equalize, and reset utilities. All are comment-prefix-aware.
 
+
+> [!IMPORTANT]  
+> This is a personal project that was largely vibecoded. I use it daily and I'm happy to share it, but I make no promises about long-term maintenance. If it's useful to you, fork it and make it your own.
+
+---
+# Video example
 https://github.com/user-attachments/assets/99b99205-2693-4d5e-9d38-37edcb0d952e
 
 ### Boxes
@@ -280,4 +306,4 @@ Inspired by [comment-box.nvim](https://github.com/ludopinelli/comment-box.nvim) 
 
 ## License
 
-Do whatever you want with it.
+Do whatever you want with it | MIT
