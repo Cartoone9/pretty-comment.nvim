@@ -1,17 +1,18 @@
 <h1 align="center">🪄 Pretty Comment</h1>
 <p align="center">
-  <b>Creating a beautiful comments by keybinds! </a></b>
+  <b>Creating beautiful comments using keybinds</a></b>
 </p>
 
 <!-- toc -->
   - [Introduction](#introduction)
   - [Video example](#video-example)
-  - [Boxes](#boxes)
+  - [Commands](#commands)
+    - [Boxes](#boxes)
     - [Centered titles](#centered-titles)
     - [Separators and dividers](#separators-and-dividers)
-    - [Strip](#strip)
-    -  [Equalize](#equalize)
-    -  [Reset](#reset)
+    - [Remove](#remove)
+    - [Equalize](#equalize)
+    - [Reset](#reset)
     - [Width behavior](#width-behavior)
   - [Installation](#installation)
     - [vim.pack (Neovim 0.12+)](#vimpack-neovim-012)
@@ -32,9 +33,10 @@ Eight style commands (thin and fat), plus remove, equalize, and reset utilities.
 > [!IMPORTANT]  
 > This is a personal project that was largely vibecoded. I use it daily and I'm happy to share it, but I make no promises about long-term maintenance. If it's useful to you, fork it and make it your own.
 
----
-# Video example
+### Video example
 https://github.com/user-attachments/assets/99b99205-2693-4d5e-9d38-37edcb0d952e
+
+## Commands
 
 ### Boxes
 
@@ -92,7 +94,7 @@ https://github.com/user-attachments/assets/99b99205-2693-4d5e-9d38-37edcb0d952e
 
 ---
 
-### Strip
+### Remove
 
 **`:CommentRemove`** removes any box, title, separator, or divider decoration and replaces it with plain comments. Works on both thin and fat styles. In normal mode it auto-expands; works with visual selections too.
 
@@ -306,4 +308,4 @@ Inspired by [comment-box.nvim](https://github.com/ludopinelli/comment-box.nvim) 
 
 ## License
 
-Do whatever you want with it | MIT
+[MIT](LICENSE)
